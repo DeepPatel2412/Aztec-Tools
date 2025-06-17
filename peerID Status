@@ -43,20 +43,18 @@ if [ -n "$peerid" ]; then
       .last_seen,
       .created_at,
       .multi_addresses[0].ip_info[0].country_name,
-      .multi_addresses[0].ip_info[0].city_name,
       (.multi_addresses[0].ip_info[0].latitude | tostring),
       (.multi_addresses[0].ip_info[0].longitude | tostring)
     ] | @tsv
   ')
 
   if [ -n "$stats" ]; then
-    IFS=$'\t' read -r last first country city lat lon <<<"$stats"
+    IFS=$'\t' read -r last first country lat lon <<<"$stats"
     last_local=$(date -d "$last" "+%Y-%m-%d - %H:%M" 2>/dev/null || echo "$last")
     first_local=$(date -d "$first" "+%Y-%m-%d - %H:%M" 2>/dev/null || echo "$first")
     printf "%-12s: %s\n" "Last Seen"   "$last_local"
     printf "%-12s: %s\n" "First Seen"  "$first_local"
     printf "%-12s: %s\n" "Country"     "$country"
-    printf "%-12s: %s\n" "City"        "$city"
     printf "%-12s: %s\n" "Latitude"    "$lat"
     printf "%-12s: %s\n" "Longitude"   "$lon"
   else
