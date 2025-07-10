@@ -21,18 +21,18 @@ echo "26  : Call Address Error"
 echo "429 : Too Many Requests"
 echo "500 : Internal Error"
 echo "503 : Unavailable"
-echo "Unreachable : Node/network unreachable"
+# "Unreachable : Node/network unreachable" REMOVED
 
 # ======= ETHEREUM NODE HEALTH CHECKER =======
 echo -e "\n${BLUE}========================================"
 echo "        ETHEREUM NODE HEALTH CHECKER"
 echo -e "========================================${RESET}"
 
-read -rp "Enter Execution RPC URL: " EXEC_RPC
+read -rp "Enter Sepolia RPC URL: " SEPOLIA_RPC
 read -rp "Enter Beacon RPC URL: " BEACON_RPC
 
-echo -e "\n● Execution RPC Check"
-RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$EXEC_RPC" -H "Content-Type: application/json" \
+echo -e "\n● Sepolia RPC Check"
+RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$SEPOLIA_RPC" -H "Content-Type: application/json" \
   --data '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}')
 HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
 BODY=$(echo "$RESPONSE" | sed '$d')
@@ -41,14 +41,14 @@ if [[ "$HTTP_CODE" == "200" ]]; then
   if [[ "$BLOCKNUM" != "null" && "$BLOCKNUM" != "" ]]; then
     DEC_BLOCKNUM=$((16#${BLOCKNUM:2}))
     echo -e "${GREEN}✓ Healthy${RESET} (Block: ${DEC_BLOCKNUM})"
-    EXEC_OK=1
+    SEPOLIA_OK=1
   else
     echo -e "${RED}✗ Unhealthy${RESET}"
-    EXEC_OK=0
+    SEPOLIA_OK=0
   fi
 else
   echo -e "${RED}✗ Unreachable (HTTP $HTTP_CODE)${RESET}"
-  EXEC_OK=0
+  SEPOLIA_OK=0
 fi
 
 echo -e "\n● Beacon Node Check"
@@ -93,26 +93,30 @@ if [[ -n "$HEAD" ]]; then
   SLOTS_WITH_BLOBS=0
   ERRORS=0
   TOTAL_BLOBS=0
+  BLOB_FETCH_ERRORS=0
+  BLOB_FETCH_ERROR_SLOTS=()
+
   for ((i=0; i<10; i++)); do
     SLOT=$((HEAD-i))
     BLOB_RESPONSE=$(curl -s -w "\n%{http_code}" --max-time 10 "$BEACON_RPC/eth/v1/beacon/blob_sidecars/$SLOT")
     BLOB_HTTP_CODE=$(echo "$BLOB_RESPONSE" | tail -n1)
     BLOB_BODY=$(echo "$BLOB_RESPONSE" | sed '$d')
+    N=$(echo "$BLOB_BODY" | jq -r '.data | length' 2>/dev/null)
+
     if [[ "$BLOB_HTTP_CODE" == "200" ]]; then
-      N=$(echo "$BLOB_BODY" | jq -r '.data | length' 2>/dev/null)
       if [[ "$N" =~ ^[1-9][0-9]*$ ]]; then
-        echo -e "${GREEN}✓ Slot $SLOT: $N blob(s)${RESET}"
+        echo -e "${GREEN}✓ Slot $SLOT: Fetch success, $N blob(s)${RESET}"
         ((SLOTS_WITH_BLOBS++))
         ((TOTAL_BLOBS+=N))
       else
-        echo -e "${YELLOW}⚠ Slot $SLOT: No blobs${RESET}"
+        echo -e "${RED}✗ Slot $SLOT: Fetch success, but no blobs found${RESET}"
+        ((BLOB_FETCH_ERRORS++))
+        BLOB_FETCH_ERROR_SLOTS+=("$SLOT")
       fi
-    elif [[ "$BLOB_HTTP_CODE" == "404" ]]; then
-      echo -e "${YELLOW}⚠ Slot $SLOT: Not found${RESET}"
-      ((ERRORS++))
     else
-      echo -e "${RED}✗ Slot $SLOT: Error (HTTP $BLOB_HTTP_CODE)${RESET}"
-      ((ERRORS++))
+      echo -e "${RED}✗ Slot $SLOT: Fetch failed (HTTP $BLOB_HTTP_CODE)${RESET}"
+      ((BLOB_FETCH_ERRORS++))
+      BLOB_FETCH_ERROR_SLOTS+=("$SLOT")
     fi
   done
 
@@ -124,14 +128,33 @@ if [[ -n "$HEAD" ]]; then
   else
     STATUS="${GREEN}HEALTHY${RESET}"
   fi
+
+  # --- Rate Limiting Check ---
+  echo -e "\n● Rate Limiting Check"
+  RATE_LIMITED=0
+  for i in {1..5}; do
+    RESP=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "$BEACON_RPC/eth/v1/beacon/blob_sidecars/head")
+    if [[ "$RESP" == "429" ]]; then
+      echo -e "${RED}✗ Rate limit detected (HTTP 429) on attempt $i${RESET}"
+      RATE_LIMITED=1
+      break
+    fi
+  done
+  if [[ $RATE_LIMITED -eq 0 ]]; then
+    echo -e "${GREEN}✓ No rate limiting detected in rapid requests${RESET}"
+  fi
 fi
 
 echo -e "\n${BLUE}========== Summary ==========${RESET}"
-printf "Execution RPC : %b\n" "$([[ ${EXEC_OK:-0} -eq 1 ]] && echo -e "${GREEN}OK${RESET}" || echo -e "${RED}FAIL${RESET}")"
+printf "Sepolia RPC   : %b\n" "$([[ ${SEPOLIA_OK:-0} -eq 1 ]] && echo -e "${GREEN}OK${RESET}" || echo -e "${RED}FAIL${RESET}")"
 printf "Beacon RPC    : %b\n" "$([[ ${BEACON_OK:-0} -eq 1 ]] && echo -e "${GREEN}OK${RESET}" || echo -e "${RED}FAIL${RESET}")"
 if [[ -n "$HEAD" ]]; then
   printf "Blob Success  : %d/%d slots (%.2f%%) -> %b\n" "$SLOTS_WITH_BLOBS" "$TOTAL" "$SUCCESS_RATE" "$STATUS"
   printf "Total Blobs   : %d (Errors: %d)\n" "$TOTAL_BLOBS" "$ERRORS"
+  printf "Blob Fetch Errors: %d/%d slots\n" "$BLOB_FETCH_ERRORS" "$TOTAL"
+  if (( BLOB_FETCH_ERRORS > 0 )); then
+    echo -e "Slots with fetch errors: ${RED}${BLOB_FETCH_ERROR_SLOTS[*]}${RESET}"
+  fi
 fi
 
 echo -e "\nThreshold Guide: ${GREEN}HEALTHY: ≥75%${RESET} | ${YELLOW}WARNING: 25%-75%${RESET} | ${RED}CRITICAL: <25%${RESET}"
