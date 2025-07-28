@@ -6,22 +6,22 @@ fi
 
 sudo docker logs "$container_id" 2>&1 | awk '
   tolower($0) ~ /validator started validator with addresses:/ {
-    print "Validator Addresses:"
-    gsub(/.*addresses: /, "")
-    n = split($0, addrs, ",")
+    print "Validator Addresses:";
+    gsub(/.*addresses: /, "", $0);
+    n = split($0, addrs, ",");
     for (i = 1; i <= n; i++) {
-      gsub(/^ +| +$/, "", addrs[i])
-      print addrs[i]
+      gsub(/^ +| +$/, "", addrs[i]);
+      print addrs[i];
     }
-    found_validator = 1
+    found_validator = 1;
   }
   tolower($0) ~ /sequencer.*started.*with address/ {
-    match($0, /(0x[a-fA-F0-9]{40})/, arr)
+    match($0, /(0x[a-fA-F0-9]{40})/, arr);
     if (arr[1] != "") {
-      print "\nSequencer Address:"
-      print arr[1]
-      found_sequencer = 1
+      print "\nSequencer Address:";
+      print arr[1];
+      found_sequencer = 1;
     }
   }
-  found_validator && found_sequencer { exit }
+  found_validator && found_sequencer { exit; }
 '
