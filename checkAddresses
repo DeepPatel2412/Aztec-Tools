@@ -1,27 +1,124 @@
-container_id=$(docker ps -q --filter "name=aztec" | head -1)
+#!/bin/bash
+
+tick="✓"
+bullet="●"
+subbullet="└──"
+
+print_header() {
+  local title="$1"
+  local width=50
+  local padding=$(( (width - ${#title}) / 2 ))
+  printf '=%.0s' $(seq 1 $width)
+  echo
+  printf "%*s%s%*s\n" $padding "" "$title" $padding ""
+  printf '=%.0s' $(seq 1 $width)
+  echo
+}
+
+print_bullet() {
+  printf "%s %s\n" "$bullet" "$1"
+}
+
+print_subbullet_status() {
+  local msg="$1"
+  local symbol="${2:-}"
+  printf "  %s %s%s\n" "$subbullet" "$msg" "${symbol:+ $symbol}"
+}
+
+# Print header
+print_header "Aztec Node Addresses"
+
+# Check Aztec container presence
+container_id=$(docker ps -q --filter "name=aztec" | head -1 || true)
+
 if [ -z "$container_id" ]; then
-  echo "No container with 'aztec' in name found."
-  exit 1
+  # Container not found or not running, print Not Found block without status line
+  print_bullet "Node"
+  print_subbullet_status "Status: Not Found" "$tick"
+  print_bullet "Validator Addresses"
+  print_subbullet_status "Logs Not Found" "$tick"
+  print_bullet "Sequencer Address"
+  print_subbullet_status "Logs Not Found" "$tick"
+else
+  # Extract addresses via logs
+  raw_output=$(sudo docker logs "$container_id" 2>&1 | awk '
+    tolower($0) ~ /validator started validator with addresses:/ {
+      print "Validator Addresses:";
+      line = $0
+      sub(/.*addresses: /, "", line)
+      n = split(line, addrs, ",")
+      for (i = 1; i <= n; i++) {
+        gsub(/^ +| +$/, "", addrs[i])
+        print addrs[i]
+      }
+      found_validator=1
+    }
+    tolower($0) ~ /sequencer.*started.*with address/ {
+      match($0, /(0x[a-fA-F0-9]{40})/, arr)
+      if (arr[1] != "") {
+        print "\nSequencer Address:"
+        print arr[1]
+        found_sequencer=1
+      }
+    }
+    found_validator && found_sequencer { exit 0 }
+  ')
+
+  validator_addresses=()
+  sequencer_address=""
+  mode="none"
+
+  while read -r line; do
+    if [[ "$line" == "Validator Addresses:" ]]; then
+      mode="validator"
+      continue
+    elif [[ "$line" == "Sequencer Address:" ]]; then
+      mode="sequencer"
+      continue
+    fi
+
+    if [[ "$mode" == "validator" ]]; then
+      validator_addresses+=("$line")
+    elif [[ "$mode" == "sequencer" ]]; then
+      sequencer_address="$line"
+    fi
+  done <<< "$raw_output"
+
+  print_bullet "Node"
+
+  # Check if at least one validator address matches the sequencer address
+  match_found="false"
+  for vaddr in "${validator_addresses[@]}"; do
+    if [[ "$vaddr" == "$sequencer_address" ]]; then
+      match_found="true"
+      break
+    fi
+  done
+
+  if [[ "$match_found" == "true" ]]; then
+    print_subbullet_status "Status: Correct Setup" "$tick"
+  else
+    print_subbullet_status "Status: Not Found" "$tick"
+  fi
+
+  print_bullet "Validator Addresses"
+  if [ ${#validator_addresses[@]} -eq 0 ]; then
+    print_subbullet_status "Logs Not Found" "$tick"
+  else
+    for va in "${validator_addresses[@]}"; do
+      [[ -z "$va" ]] && continue
+      print_subbullet_status "$va" "$tick"
+    done
+  fi
+
+  print_bullet "Sequencer Address"
+  if [[ -z "$sequencer_address" ]]; then
+    print_subbullet_status "Logs Not Found" "$tick"
+  else
+    print_subbullet_status "$sequencer_address" "$tick"
+  fi
 fi
 
-sudo docker logs "$container_id" 2>&1 | awk '
-  tolower($0) ~ /validator started validator with addresses:/ {
-    print "Validator Addresses:";
-    gsub(/.*addresses: /, "", $0);
-    n = split($0, addrs, ",");
-    for (i = 1; i <= n; i++) {
-      gsub(/^ +| +$/, "", addrs[i]);
-      print addrs[i];
-    }
-    found_validator = 1;
-  }
-  tolower($0) ~ /sequencer.*started.*with address/ {
-    match($0, /(0x[a-fA-F0-9]{40})/, arr);
-    if (arr[1] != "") {
-      print "\nSequencer Address:";
-      print arr[1];
-      found_sequencer = 1;
-    }
-  }
-  found_validator && found_sequencer { exit; }
-'
+# Print footer end line
+printf '=%.0s' $(seq 1 50)
+echo
