@@ -193,17 +193,15 @@ if [[ -n "$successful_dir" ]]; then
   cd "$successful_dir" || {
     print_bullet "Error"
     print_subbullet_status "Failed to enter directory $successful_dir" "$cross"
+    # Skip section if cd fails
     successful_dir=""
   }
 
   if [[ -n "$successful_dir" ]]; then
-    # Check docker-compose.yml
     docker_comp_file="docker-compose.yml"
     docker_status="$cross"
-    if [[ -f "$docker_comp_file" ]]; then
-      if grep -Eq "^[[:space:]]*VALIDATOR_PRIVATE_KEYS:[[:space:]]*\$\{VALIDATOR_PRIVATE_KEYS\}[[:space:]]*$" "$docker_comp_file"; then
-        docker_status="$tick"
-      fi
+    if [[ -f "$docker_comp_file" ]] && grep -Eq '^[[:space:]]*VALIDATOR_PRIVATE_KEYS:[[:space:]]*\$\{VALIDATOR_PRIVATE_KEYS\}[[:space:]]*$' "$docker_comp_file"; then
+      docker_status="$tick"
     fi
 
     print_bullet "docker-compose.yml"
@@ -213,13 +211,10 @@ if [[ -n "$successful_dir" ]]; then
       print_subbullet_status "Status: Incorrect Setup" "$cross"
     fi
 
-    # Check .env
     env_file=".env"
     env_status="$cross"
-    if [[ -f "$env_file" ]]; then
-      if grep -q "^VALIDATOR_PRIVATE_KEYS=" "$env_file"; then
-        env_status="$tick"
-      fi
+    if [[ -f "$env_file" ]] && grep -q '^VALIDATOR_PRIVATE_KEYS=' "$env_file"; then
+      env_status="$tick"
     fi
 
     print_bullet ".env"
@@ -229,22 +224,20 @@ if [[ -n "$successful_dir" ]]; then
       print_subbullet_status "Status: Incorrect Setup" "$cross"
     fi
 
-    # Prompt if incorrect
     if [[ "$docker_status" == "$cross" || "$env_status" == "$cross" ]]; then
       read_attempts=0
       while [[ $read_attempts -lt 2 ]]; do
         read -rp "Would you like to correct the setup ? y/n : " yn
         case "$yn" in
           [Yy])
-            # Fix docker-compose.yml if needed
             if [[ "$docker_status" == "$cross" && -f "$docker_comp_file" ]]; then
               # Replace any line starting with spaces + VALIDATOR_PRIVATE_KEY*:
               sed -i -E 's|^[[:space:]]*VALIDATOR_PRIVATE_KEY[^:]*:.*|      VALIDATOR_PRIVATE_KEYS: ${VALIDATOR_PRIVATE_KEYS}|' "$docker_comp_file"
             fi
 
-            # Fix .env if needed
             if [[ "$env_status" == "$cross" && -f "$env_file" ]]; then
-              sed -i -E 's/^VALIDATOR_PRIVATE_KEY=(.*)/VALIDATOR_PRIVATE_KEYS=\1/' "$env_file"
+              # Enhanced fix for .env variable name variants with arbitrary prefix letters, suffix chars, preserving value
+              sed -i -E 's/^[[:space:]]*[[:alnum:]_]*VALIDATOR_PRIVATE_KEY.*=([^#\n]*)/VALIDATOR_PRIVATE_KEYS=\1/' "$env_file"
             fi
             echo "Setup corrected."
             break
