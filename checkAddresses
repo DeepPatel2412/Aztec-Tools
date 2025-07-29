@@ -1,6 +1,7 @@
 #!/bin/bash
 
 tick="✓"
+cross="✗"
 bullet="●"
 subbullet="└──"
 
@@ -20,76 +21,70 @@ print_bullet() {
 }
 
 print_subbullet_status() {
-  local msg="$1"
-  local symbol="${2:-}"
-  printf "  %s %s%s\n" "$subbullet" "$msg" "${symbol:+ $symbol}"
+  printf "  %s %s %s\n" "$subbullet" "$1" "${2:-}"
 }
 
-# Print header
+# -------- SECTION 1: Aztec Node Addresses --------
+
 print_header "Aztec Node Addresses"
 
-# Check Aztec container presence
-container_id=$(docker ps -q --filter "name=aztec" | head -1 || true)
+container_id=$(docker ps -q --filter name=aztec | head -1 || true)
 
-if [ -z "$container_id" ]; then
-  # Container not found or not running, print Not Found block without status line
+if [[ -z "$container_id" ]]; then
   print_bullet "Node"
   print_subbullet_status "Status: Not Found" "$tick"
   print_bullet "Validator Addresses"
   print_subbullet_status "Logs Not Found" "$tick"
   print_bullet "Sequencer Address"
   print_subbullet_status "Logs Not Found" "$tick"
+  # Footer separator for Section 1 when no container found
+  printf '=%.0s' $(seq 1 50)
+  echo
+  # Do not exit here; skip Section 2 by using a flag
+  no_container=true
 else
-  # Extract addresses via logs
+  no_container=false
+fi
+
+if [[ "$no_container" == false ]]; then
+  # Extract lines containing validator and sequencer addresses
   raw_output=$(sudo docker logs "$container_id" 2>&1 | awk '
+    BEGIN {validator_found=0; sequencer_found=0}
     tolower($0) ~ /validator started validator with addresses:/ {
-      print "Validator Addresses:";
+      validator_found=1
       line = $0
       sub(/.*addresses: /, "", line)
       n = split(line, addrs, ",")
-      for (i = 1; i <= n; i++) {
+      for (i=1; i<=n; i++) {
         gsub(/^ +| +$/, "", addrs[i])
-        print addrs[i]
+        print "VALIDATOR:" addrs[i]
       }
-      found_validator=1
     }
     tolower($0) ~ /sequencer.*started.*with address/ {
-      match($0, /(0x[a-fA-F0-9]{40})/, arr)
-      if (arr[1] != "") {
-        print "\nSequencer Address:"
-        print arr[1]
-        found_sequencer=1
+      if (match($0, /(0x[a-fA-F0-9]{40})/, arr)) {
+        sequencer_found=1
+        print "SEQUENCER:" arr[1]
       }
     }
-    found_validator && found_sequencer { exit 0 }
+    validator_found && sequencer_found {exit 0}
   ')
 
-  validator_addresses=()
+  declare -a validator_addresses=()
   sequencer_address=""
-  mode="none"
-
-  while read -r line; do
-    if [[ "$line" == "Validator Addresses:" ]]; then
-      mode="validator"
-      continue
-    elif [[ "$line" == "Sequencer Address:" ]]; then
-      mode="sequencer"
-      continue
-    fi
-
-    if [[ "$mode" == "validator" ]]; then
-      validator_addresses+=("$line")
-    elif [[ "$mode" == "sequencer" ]]; then
-      sequencer_address="$line"
+  while IFS= read -r line; do
+    if [[ "$line" == VALIDATOR:* ]]; then
+      addr="${line#VALIDATOR:}"
+      validator_addresses+=("$addr")
+    elif [[ "$line" == SEQUENCER:* ]]; then
+      sequencer_address="${line#SEQUENCER:}"
     fi
   done <<< "$raw_output"
 
   print_bullet "Node"
 
-  # Check if at least one validator address matches the sequencer address
   match_found="false"
-  for vaddr in "${validator_addresses[@]}"; do
-    if [[ "$vaddr" == "$sequencer_address" ]]; then
+  for v in "${validator_addresses[@]}"; do
+    if [[ "$v" == "$sequencer_address" ]]; then
       match_found="true"
       break
     fi
@@ -102,23 +97,102 @@ else
   fi
 
   print_bullet "Validator Addresses"
+
   if [ ${#validator_addresses[@]} -eq 0 ]; then
     print_subbullet_status "Logs Not Found" "$tick"
   else
-    for va in "${validator_addresses[@]}"; do
-      [[ -z "$va" ]] && continue
-      print_subbullet_status "$va" "$tick"
+    for addr in "${validator_addresses[@]}"; do
+      [[ -z "$addr" ]] && continue
+      print_subbullet_status "$addr" "$tick"
     done
   fi
 
   print_bullet "Sequencer Address"
   if [[ -z "$sequencer_address" ]]; then
     print_subbullet_status "Logs Not Found" "$tick"
+    printf '=%.0s' $(seq 1 50)
+    echo
   else
     print_subbullet_status "$sequencer_address" "$tick"
   fi
-fi
 
-# Print footer end line
-printf '=%.0s' $(seq 1 50)
-echo
+  # -------- SECTION 2: Aztec Directory Search --------
+
+  print_header "Aztec Directory Check"
+  print_bullet "Directory Path"
+
+  successful_dir=""
+  cwd="$PWD"
+  while [[ "$cwd" != "/" && -n "$cwd" ]]; do
+    if [[ "$(basename "$cwd")" == "aztec" ]]; then
+      print_subbullet_status "Current/parent is: $cwd" "$tick"
+      successful_dir="$cwd"
+      break
+    fi
+    cwd=$(dirname "$cwd")
+  done
+
+  if [[ -z "$successful_dir" ]]; then
+    local_mount=$(df -P . | tail -1 | awk '{print $6}')
+    print_subbullet_status "Scanning $local_mount ..." ""
+    found=$(find "$local_mount" -maxdepth 8 -type d -name "aztec" 2>/dev/null | head -n1 || true)
+    if [[ -n "$found" ]]; then
+      print_subbullet_status "Found at: $found" "$tick"
+      successful_dir="$found"
+    fi
+  fi
+
+  if [[ -z "$successful_dir" ]]; then
+    mapfile -t mounts < <(awk '$3 ~ /(ext4|xfs|btrfs|overlay|aufs)/ {print $2}' /proc/mounts | sort -u)
+    for mnt in "${mounts[@]}"; do
+      [[ "$mnt" == "$local_mount" ]] && continue
+      print_subbullet_status "Scanning $mnt ..." ""
+      found=$(find "$mnt" -maxdepth 8 -type d -name "aztec" 2>/dev/null | head -n1 || true)
+      if [[ -n "$found" ]]; then
+        print_subbullet_status "Found at: $found" "$tick"
+        successful_dir="$found"
+        break
+      fi
+    done
+  fi
+
+  if [[ -z "$successful_dir" ]]; then
+    print_subbullet_status "Scanning / ..." ""
+    found=$(find / -maxdepth 15 -type d -name "aztec" 2>/dev/null | head -n1 || true)
+    if [[ -n "$found" ]]; then
+      print_subbullet_status "Found at: $found" "$tick"
+      successful_dir="$found"
+    fi
+  fi
+
+  if [[ -z "$successful_dir" ]]; then
+    read -rp " Enter Correct Directory Name : " input_dir
+    found=""
+    for mnt in "${mounts[@]}"; do
+      found=$(find "$mnt" -maxdepth 8 -type d -name "$input_dir" 2>/dev/null | head -n1 || true)
+      if [[ -n "$found" ]]; then
+        successful_dir="$found"
+        break
+      fi
+    done
+
+    if [[ -z "$successful_dir" ]]; then
+      found=$(find / -maxdepth 15 -type d -name "$input_dir" 2>/dev/null | head -n1 || true)
+      [[ -n "$found" ]] && successful_dir="$found"
+    fi
+
+    if [[ -n "$successful_dir" ]]; then
+      print_subbullet_status "Found at: $successful_dir" "$tick"
+    else
+      print_bullet "Directory Doesn't Exist"
+      printf '=%.0s' $(seq 1 50)
+      echo
+    fi
+  fi
+
+  printf '=%.0s' $(seq 1 50)
+  echo
+
+fi  # end if no_container false
+
+# Script ends here naturally with success output, no exits called
