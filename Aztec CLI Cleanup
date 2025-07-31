@@ -1,8 +1,14 @@
-# --- Cleanup Section ---
-sudo docker ps -a --format '{{.ID}} {{.Image}}' | grep -i aztec | awk '{print $1}' | xargs -r sudo docker stop
-sudo docker ps -a --format '{{.ID}} {{.Image}}' | grep -i aztec | awk '{print $1}' | xargs -r sudo docker rm
+# --- Forceful Cleanup Section ---
+# Forcibly stop and remove all Aztec-related Docker containers
+sudo docker ps -a --format '{{.ID}} {{.Image}}' | grep -i aztec | awk '{print $1}' | xargs -r sudo docker rm -f
+
+# Quit all Aztec-related screen sessions
 screen -ls | grep -i aztec | awk '{print $1}' | xargs -r -I {} screen -X -S {} quit
-sudo docker images --format '{{.Repository}}:{{.Tag}} {{.ID}}' | grep -i aztec | awk '{print $2}' | sort | uniq | xargs -r sudo docker rmi
+
+# Forcibly remove all Aztec-related Docker images
+sudo docker images --format '{{.Repository}}:{{.Tag}} {{.ID}}' | grep -i aztec | awk '{print $2}' | sort | uniq | xargs -r sudo docker rmi -f
+
+# Forcefully remove the ~/.aztec/ directory
 sudo rm -rf ~/.aztec/
 
 # --- Verification Section ---
