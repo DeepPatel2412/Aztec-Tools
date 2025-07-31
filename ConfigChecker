@@ -24,251 +24,288 @@ print_subbullet_status() {
   printf "  %s %s %s\n" "$subbullet" "$1" "${2:-}"
 }
 
-# -------- SECTION 1: Aztec Node Addresses --------
+main() {
+  # -------- PREREQUISITES CHECK (gawk) --------
 
-print_header "Aztec Node Addresses"
+  print_header "Prerequises Check"
 
-container_id=$(docker ps -q --filter name=aztec | head -1 || true)
+  print_bullet "Prerequises (gawk tool)"
 
-if [[ -z "$container_id" ]]; then
-  print_bullet "Node"
-  print_subbullet_status "Status: Not Found" "$tick"
-  print_bullet "Validator Addresses"
-  print_subbullet_status "Logs Not Found" "$tick"
-  print_bullet "Sequencer Address"
-  print_subbullet_status "Logs Not Found" "$tick"
+  if command -v gawk >/dev/null 2>&1; then
+    print_subbullet_status "Status: Found" "$tick"
+    print_subbullet_status "Installation: Skipped" "$tick"
+    AWK_BIN="gawk"
+  else
+    print_subbullet_status "Status: Not Found" "$tick"
+    print_subbullet_status "Installation : Started" "$tick"
+
+    if [ "$(id -u)" = "0" ] && command -v apt-get >/dev/null 2>&1; then
+      if apt-get update -qq && apt-get install -y -qq gawk; then
+        print_subbullet_status "Install: Success" "$tick"
+        AWK_BIN="gawk"
+      else
+        print_subbullet_status "Install: Failed" "$cross"
+        AWK_BIN="awk"
+      fi
+    else
+      print_subbullet_status "Install: Skipped (No sudo/apt)" "$cross"
+      AWK_BIN="awk"
+    fi
+  fi
+
   printf '=%.0s' $(seq 1 50)
   echo
-  exit 0
-fi
 
-# Extract lines containing validator and sequencer addresses
-raw_output=$(sudo docker logs "$container_id" 2>&1 | awk '
-  BEGIN {validator_found=0; sequencer_found=0}
-  tolower($0) ~ /validator started validator with addresses:/ {
-    validator_found=1
-    line = $0
-    sub(/.*addresses: /, "", line)
-    n = split(line, addrs, ",")
+  # Clear the screen before continuing
+  clear
+
+  # -------- SECTION 1: Aztec Node Addresses --------
+
+  print_header "Aztec Node Addresses"
+
+  container_id=$(docker ps -q --filter name=aztec | head -1 || true)
+
+  if [[ -z "$container_id" ]]; then
+    print_bullet "Node"
+    print_subbullet_status "Status: Not Found" "$tick"
+    print_bullet "Validator Addresses"
+    print_subbullet_status "Logs Not Found" "$tick"
+    print_bullet "Sequencer Address"
+    print_subbullet_status "Logs Not Found" "$tick"
+    printf '=%.0s' $(seq 1 50)
+    echo
+    return 0
+  fi
+
+  # Extract validator and sequencer addresses with flexible pattern
+  raw_output=$(sudo docker logs "$container_id" 2>&1 | $AWK_BIN '
+  BEGIN {
+    validator_found=0;
+    sequencer_found=0
+  }
+  /validator/ && /address/ {
+    validator_found=1;
+    line = $0;
+    sub(/.*addresses?: /, "", line);
+    n = split(line, addrs, ",");
     for (i=1; i<=n; i++) {
-      gsub(/^ +| +$/, "", addrs[i])
-      print "VALIDATOR:" addrs[i]
+      gsub(/^ +| +$/, "", addrs[i]);
+      print "VALIDATOR:" addrs[i];
     }
   }
-  tolower($0) ~ /sequencer.*started.*with address/ {
-    if (match($0, /(0x[a-fA-F0-9]{40})/, arr)) {
-      sequencer_found=1
-      print "SEQUENCER:" arr[1]
+  /sequencer.*started.*with address/ {
+    if (match($0, /(0x[0-9a-fA-F]{40})/, arr)) {
+      sequencer_found=1;
+      print "SEQUENCER:" arr[1];
     }
   }
-  validator_found && sequencer_found {exit 0}
-')
+  (validator_found && sequencer_found) { exit 0 }
+  ')
 
-declare -a validator_addresses=()
-sequencer_address=""
-while IFS= read -r line; do
-  if [[ "$line" == VALIDATOR:* ]]; then
-    addr="${line#VALIDATOR:}"
-    validator_addresses+=("$addr")
-  elif [[ "$line" == SEQUENCER:* ]]; then
-    sequencer_address="${line#SEQUENCER:}"
-  fi
-done <<< "$raw_output"
+  declare -a validator_addresses=()
+  sequencer_address=""
+  while IFS= read -r line; do
+    if [[ "$line" == VALIDATOR:* ]]; then
+      addr="${line#VALIDATOR:}"
+      validator_addresses+=("$addr")
+    elif [[ "$line" == SEQUENCER:* ]]; then
+      sequencer_address="${line#SEQUENCER:}"
+    fi
+  done <<< "$raw_output"
 
-print_bullet "Node"
+  print_bullet "Node"
 
-match_found="false"
-for v in "${validator_addresses[@]}"; do
-  if [[ "$v" == "$sequencer_address" ]]; then
-    match_found="true"
-    break
-  fi
-done
-
-if [[ "$match_found" == "true" ]]; then
-  print_subbullet_status "Status: Correct Setup" "$tick"
-else
-  print_subbullet_status "Status: Not Found" "$tick"
-fi
-
-print_bullet "Validator Addresses"
-if [ ${#validator_addresses[@]} -eq 0 ]; then
-  print_subbullet_status "Logs Not Found" "$tick"
-else
-  for addr in "${validator_addresses[@]}"; do
-    [[ -z "$addr" ]] && continue
-    print_subbullet_status "$addr" "$tick"
-  done
-fi
-
-print_bullet "Sequencer Address"
-if [[ -z "$sequencer_address" ]]; then
-  print_subbullet_status "Logs Not Found" "$tick"
-  printf '=%.0s' $(seq 1 50)
-  echo
-else
-  print_subbullet_status "$sequencer_address" "$tick"
-fi
-
-# -------- SECTION 2: Aztec Directory Check --------
-
-print_header "Aztec Directory Check"
-print_bullet "Directory Path"
-
-successful_dir=""
-cwd="$PWD"
-while [[ "$cwd" != "/" && -n "$cwd" ]]; do
-  if [[ "$(basename "$cwd")" == "aztec" ]]; then
-    print_subbullet_status "Current/parent is: $cwd" "$tick"
-    successful_dir="$cwd"
-    break
-  fi
-  cwd=$(dirname "$cwd")
-done
-
-if [[ -z "$successful_dir" ]]; then
-  local_mount=$(df -P . | tail -1 | awk '{print $6}')
-  print_subbullet_status "Scanning $local_mount ..." ""
-  found=$(find "$local_mount" -maxdepth 8 -type d -name "aztec" 2>/dev/null | head -n1 || true)
-  if [[ -n "$found" ]]; then
-    print_subbullet_status "Found at: $found" "$tick"
-    successful_dir="$found"
-  fi
-fi
-
-if [[ -z "$successful_dir" ]]; then
-  mapfile -t mounts < <(awk '$3 ~ /(ext4|xfs|btrfs|overlay|aufs)/ {print $2}' /proc/mounts | sort -u)
-  for mnt in "${mounts[@]}"; do
-    [[ "$mnt" == "$local_mount" ]] && continue
-    print_subbullet_status "Scanning $mnt ..." ""
-    found=$(find "$mnt" -maxdepth 8 -type d -name "aztec" 2>/dev/null | head -n1 || true)
-    if [[ -n "$found" ]]; then
-      print_subbullet_status "Found at: $found" "$tick"
-      successful_dir="$found"
+  match_found="false"
+  for v in "${validator_addresses[@]}"; do
+    if [[ "$v" == "$sequencer_address" ]]; then
+      match_found="true"
       break
     fi
   done
-fi
 
-if [[ -z "$successful_dir" ]]; then
-  print_subbullet_status "Scanning / ..." ""
-  found=$(find / -maxdepth 15 -type d -name "aztec" 2>/dev/null | head -n1 || true)
-  if [[ -n "$found" ]]; then
-    print_subbullet_status "Found at: $found" "$tick"
-    successful_dir="$found"
+  if [[ "$match_found" == "true" ]]; then
+    print_subbullet_status "Status: Correct Setup" "$tick"
+  else
+    print_subbullet_status "Status: Not Found" "$tick"
   fi
-fi
 
-if [[ -z "$successful_dir" ]]; then
-  read -rp " Enter Correct Directory Name : " input_dir
-  found=""
-  for mnt in "${mounts[@]}"; do
-    found=$(find "$mnt" -maxdepth 8 -type d -name "$input_dir" 2>/dev/null | head -n1 || true)
-    if [[ -n "$found" ]]; then
-      successful_dir="$found"
+  print_bullet "Validator Addresses"
+  if [ ${#validator_addresses[@]} -eq 0 ]; then
+    print_subbullet_status "Logs Not Found" "$tick"
+  else
+    for addr in "${validator_addresses[@]}"; do
+      [[ -z "$addr" ]] && continue
+      print_subbullet_status "$addr" "$tick"
+    done
+  fi
+
+  print_bullet "Sequencer Address"
+  if [[ -z "$sequencer_address" ]]; then
+    print_subbullet_status "Logs Not Found" "$tick"
+  else
+    print_subbullet_status "$sequencer_address" "$tick"
+  fi
+  # No extra blank line here
+
+  # -------- SECTION 2: Aztec Directory Check --------
+
+  print_header "Aztec Directory Check"
+  print_bullet "Directory Path"
+
+  successful_dir=""
+  cwd="$PWD"
+  while [[ "$cwd" != "/" && -n "$cwd" ]]; do
+    if [[ "$(basename "$cwd")" == "aztec" ]]; then
+      print_subbullet_status "Current/parent is: $cwd" "$tick"
+      successful_dir="$cwd"
       break
     fi
+    cwd=$(dirname "$cwd")
   done
 
   if [[ -z "$successful_dir" ]]; then
-    found=$(find / -maxdepth 15 -type d -name "$input_dir" 2>/dev/null | head -n1 || true)
-    [[ -n "$found" ]] && successful_dir="$found"
+    local_mount=$(df -P . | tail -1 | awk '{print $6}')
+    print_subbullet_status "Scanning $local_mount ..." ""
+    found=$(find "$local_mount" -maxdepth 8 -type d -name "aztec" 2>/dev/null | head -n1 || true)
+    if [[ -n "$found" ]]; then
+      print_subbullet_status "Found at: $found" "$tick"
+      successful_dir="$found"
+    fi
   fi
+
+  if [[ -z "$successful_dir" ]]; then
+    mapfile -t mounts < <(awk '$3 ~ /(ext4|xfs|btrfs|overlay|aufs)/ {print $2}' /proc/mounts | sort -u)
+    for mnt in "${mounts[@]}"; do
+      [[ "$mnt" == "$local_mount" ]] && continue
+      print_subbullet_status "Scanning $mnt ..." ""
+      found=$(find "$mnt" -maxdepth 8 -type d -name "aztec" 2>/dev/null | head -n1 || true)
+      if [[ -n "$found" ]]; then
+        print_subbullet_status "Found at: $found" "$tick"
+        successful_dir="$found"
+        break
+      fi
+    done
+  fi
+
+  if [[ -z "$successful_dir" ]]; then
+    print_subbullet_status "Scanning / ..." ""
+    found=$(find / -maxdepth 15 -type d -name "aztec" 2>/dev/null | head -n1 || true)
+    if [[ -n "$found" ]]; then
+      print_subbullet_status "Found at: $found" "$tick"
+      successful_dir="$found"
+    fi
+  fi
+
+  if [[ -z "$successful_dir" ]]; then
+    read -rp " Enter Correct Directory Name : " input_dir
+    found=""
+    for mnt in "${mounts[@]}"; do
+      found=$(find "$mnt" -maxdepth 8 -type d -name "$input_dir" 2>/dev/null | head -n1 || true)
+      if [[ -n "$found" ]]; then
+        successful_dir="$found"
+        break
+      fi
+    done
+
+    if [[ -z "$successful_dir" ]]; then
+      found=$(find / -maxdepth 15 -type d -name "$input_dir" 2>/dev/null | head -n1 || true)
+      [[ -n "$found" ]] && successful_dir="$found"
+    fi
+
+    if [[ -n "$successful_dir" ]]; then
+      print_subbullet_status "Found at: $successful_dir" "$tick"
+    else
+      print_bullet "Directory Doesn't Exist"
+      printf '=%.0s' $(seq 1 50)
+      echo
+    fi
+  fi
+  # No extra blank line here
+
+  # -------- SECTION 3: Config Files Check and Fix --------
 
   if [[ -n "$successful_dir" ]]; then
-    print_subbullet_status "Found at: $successful_dir" "$tick"
-  else
-    print_bullet "Directory Doesn't Exist"
-    printf '=%.0s' $(seq 1 50)
-    echo
+    cd "$successful_dir" || {
+      print_bullet "Error"
+      print_subbullet_status "Failed to enter directory $successful_dir" "$cross"
+      successful_dir=""
+    }
+
+    if [[ -n "$successful_dir" ]]; then
+      docker_comp_file="docker-compose.yml"
+      env_file=".env"
+
+      docker_status="$cross"
+      env_status="$cross"
+
+      if [[ -f "$docker_comp_file" ]] && grep -Eq '^[[:space:]]*VALIDATOR_PRIVATE_KEYS:[[:space:]]*\$\{VALIDATOR_PRIVATE_KEYS\}[[:space:]]*$' "$docker_comp_file"; then
+        docker_status="$tick"
+      fi
+
+      if [[ -f "$env_file" ]] && grep -q '^VALIDATOR_PRIVATE_KEYS=' "$env_file"; then
+        env_status="$tick"
+      fi
+
+      print_bullet "docker-compose.yml"
+      if [[ "$docker_status" == "$tick" ]]; then
+        print_subbullet_status "Status: Correct Setup" "$tick"
+      else
+        print_subbullet_status "Status: Incorrect Setup" "$cross"
+      fi
+
+      print_bullet ".env"
+      if [[ "$env_status" == "$tick" ]]; then
+        print_subbullet_status "Status: Correct Setup" "$tick"
+      else
+        print_subbullet_status "Status: Incorrect Setup" "$cross"
+      fi
+
+      if [[ "$docker_status" == "$cross" || "$env_status" == "$cross" ]]; then
+        read_attempts=0
+        changes_made=false
+        while [[ $read_attempts -lt 2 ]]; do
+          read -rp "Would you like to correct the setup ? y/n : " yn
+          case "$yn" in
+            [Yy])
+              if [[ "$docker_status" == "$cross" && -f "$docker_comp_file" ]]; then
+                sed -i -E 's|^[[:space:]]*VALIDATOR_PRIVATE_KEY[^:]*:.*|      VALIDATOR_PRIVATE_KEYS: ${VALIDATOR_PRIVATE_KEYS}|' "$docker_comp_file"
+                changes_made=true
+              fi
+
+              if [[ "$env_status" == "$cross" && -f "$env_file" ]]; then
+                sed -i -E 's/^[[:space:]]*[[:alnum:]_]*VALIDATOR_PRIVATE_KEY.*=([^#\n]*)/VALIDATOR_PRIVATE_KEYS=\1/' "$env_file"
+                changes_made=true
+              fi
+
+              echo "Setup corrected."
+
+              if [[ "$changes_made" == true ]]; then
+                echo "Restarting docker compose services..."
+                (cd "$successful_dir" && docker compose up -d)
+              fi
+
+              break
+              ;;
+            [Nn])
+              echo "Setup not changed."
+              break
+              ;;
+            *)
+              ((read_attempts++))
+              if [[ $read_attempts -ge 2 ]]; then
+                echo "Invalid input. No changes made."
+              else
+                echo "Please answer y or n."
+              fi
+              ;;
+          esac
+        done
+      fi
+
+      printf '=%.0s' $(seq 1 50)
+      echo
+    fi
   fi
-fi
+}
 
-printf '=%.0s' $(seq 1 50)
-echo
-
-# -------- SECTION 3: Config Files Check and Fix --------
-
-if [[ -n "$successful_dir" ]]; then
-  cd "$successful_dir" || {
-    print_bullet "Error"
-    print_subbullet_status "Failed to enter directory $successful_dir" "$cross"
-    # Skip section if cd fails
-    successful_dir=""
-  }
-
-  if [[ -n "$successful_dir" ]]; then
-    docker_comp_file="docker-compose.yml"
-    env_file=".env"
-
-    docker_status="$cross"
-    env_status="$cross"
-
-    if [[ -f "$docker_comp_file" ]] && grep -Eq '^[[:space:]]*VALIDATOR_PRIVATE_KEYS:[[:space:]]*\$\{VALIDATOR_PRIVATE_KEYS\}[[:space:]]*$' "$docker_comp_file"; then
-      docker_status="$tick"
-    fi
-
-    if [[ -f "$env_file" ]] && grep -q '^VALIDATOR_PRIVATE_KEYS=' "$env_file"; then
-      env_status="$tick"
-    fi
-
-    print_bullet "docker-compose.yml"
-    if [[ "$docker_status" == "$tick" ]]; then
-      print_subbullet_status "Status: Correct Setup" "$tick"
-    else
-      print_subbullet_status "Status: Incorrect Setup" "$cross"
-    fi
-
-    print_bullet ".env"
-    if [[ "$env_status" == "$tick" ]]; then
-      print_subbullet_status "Status: Correct Setup" "$tick"
-    else
-      print_subbullet_status "Status: Incorrect Setup" "$cross"
-    fi
-
-    if [[ "$docker_status" == "$cross" || "$env_status" == "$cross" ]]; then
-      read_attempts=0
-      changes_made=false
-      while [[ $read_attempts -lt 2 ]]; do
-        read -rp "Would you like to correct the setup ? y/n : " yn
-        case "$yn" in
-          [Yy])
-            if [[ "$docker_status" == "$cross" && -f "$docker_comp_file" ]]; then
-              sed -i -E 's|^[[:space:]]*VALIDATOR_PRIVATE_KEY[^:]*:.*|      VALIDATOR_PRIVATE_KEYS: ${VALIDATOR_PRIVATE_KEYS}|' "$docker_comp_file"
-              changes_made=true
-            fi
-
-            if [[ "$env_status" == "$cross" && -f "$env_file" ]]; then
-              sed -i -E 's/^[[:space:]]*[[:alnum:]_]*VALIDATOR_PRIVATE_KEY.*=([^#\n]*)/VALIDATOR_PRIVATE_KEYS=\1/' "$env_file"
-              changes_made=true
-            fi
-
-            echo "Setup corrected."
-
-            if [[ "$changes_made" == true ]]; then
-              echo "Restarting docker compose services..."
-              (cd "$successful_dir" && docker compose up -d)
-            fi
-
-            break
-            ;;
-          [Nn])
-            echo "Setup not changed."
-            break
-            ;;
-          *)
-            ((read_attempts++))
-            if [[ $read_attempts -ge 2 ]]; then
-              echo "Invalid input. No changes made."
-            else
-              echo "Please answer y or n."
-            fi
-            ;;
-        esac
-      done
-    fi
-
-    printf '=%.0s' $(seq 1 50)
-    echo
-  fi
-fi
+main "$@"
