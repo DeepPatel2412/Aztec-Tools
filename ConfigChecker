@@ -287,9 +287,20 @@ main() {
 
     sequencer_address=""
     validator_addresses=()
+
+    echo -e "\n[DEBUG] Raw addresses extracted:\n$raw_output\n"
+
     while IFS= read -r line; do
-      [[ $line == VALIDATOR:* ]] && validator_addresses+=("${line#VALIDATOR:}")
-      [[ $line == SEQUENCER:* ]] && sequencer_address="${line#SEQUENCER:}"
+      if [[ $line == VALIDATOR:* ]]; then
+        raw_addr="${line#VALIDATOR:}"
+        addr="$(echo -e "$raw_addr" | tr -d '\r\n' | xargs)"
+        echo "[DEBUG] Validator raw=\"$raw_addr\" | trimmed=\"$addr\""
+        validator_addresses+=("$addr")
+      elif [[ $line == SEQUENCER:* ]]; then
+        raw_seq="${line#SEQUENCER:}"
+        sequencer_address="$(echo -e "$raw_seq" | tr -d '\r\n' | xargs)"
+        echo "[DEBUG] Sequencer raw=\"$raw_seq\" | trimmed=\"$sequencer_address\""
+      fi
     done <<< "$raw_output"
 
     if [[ -z "$sequencer_address" || ${#validator_addresses[@]} -eq 0 ]]; then
@@ -299,8 +310,10 @@ main() {
 
       address_valid="Invalid"
       for addr in "${validator_addresses[@]}"; do
+        echo "[DEBUG] Comparing validator addr=\"$addr\" with sequencer=\"$sequencer_address\""
         if [[ "$addr" == "$sequencer_address" ]]; then
           address_valid="Valid"
+          echo "[DEBUG] Match found! Address is valid."
           break
         fi
       done
