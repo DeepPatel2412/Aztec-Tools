@@ -288,14 +288,8 @@ main() {
     sequencer_address=""
     validator_addresses=()
     while IFS= read -r line; do
-      if [[ $line == VALIDATOR:* ]]; then
-        addr="${line#VALIDATOR:}"
-        addr="$(echo -e "${addr}" | tr -d '[:space:]')"
-        validator_addresses+=("$addr")
-      elif [[ $line == SEQUENCER:* ]]; then
-        sequencer_address="${line#SEQUENCER:}"
-        sequencer_address="$(echo -e "${sequencer_address}" | tr -d '[:space:]')"
-      fi
+      [[ $line == VALIDATOR:* ]] && validator_addresses+=("${line#VALIDATOR:}")
+      [[ $line == SEQUENCER:* ]] && sequencer_address="${line#SEQUENCER:}"
     done <<< "$raw_output"
 
     if [[ -z "$sequencer_address" || ${#validator_addresses[@]} -eq 0 ]]; then
