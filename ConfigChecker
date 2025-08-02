@@ -266,7 +266,7 @@ main() {
 
     raw_output=$(sudo docker logs "$container_id" 2>&1 | $AWK_BIN '
       BEGIN { validator_found=0; sequencer_found=0 }
-      /validator/ && /address/ {
+      /validator/ && /address/ && $0 !~ /validator Started validator with addresses in current validator committee:/ {
         validator_found=1
         line = $0
         sub(/.*addresses?: /, "", line)
@@ -285,21 +285,29 @@ main() {
       (validator_found && sequencer_found) { exit 0 }
     ')
 
+    strip_ansi() {
+      sed -r "s/\x1B\[[0-9;]*[a-zA-Z]//g"
+    }
+
+    normalize_address() {
+      local addr="$1"
+      addr=$(echo -e "$addr" | strip_ansi)
+      addr=$(echo "$addr" | tr '[:upper:]' '[:lower:]')
+      addr="$(echo -e "$addr" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+      echo "$addr"
+    }
+
     sequencer_address=""
     validator_addresses=()
 
-    echo -e "\n[DEBUG] Raw addresses extracted:\n$raw_output\n"
-
     while IFS= read -r line; do
-      if [[ $line == VALIDATOR:* ]]; then
+      if [[ "$line" == VALIDATOR:* ]]; then
         raw_addr="${line#VALIDATOR:}"
-        addr="$(echo -e "$raw_addr" | tr -d '\r\n' | xargs)"
-        echo "[DEBUG] Validator raw=\"$raw_addr\" | trimmed=\"$addr\""
+        addr=$(normalize_address "$raw_addr")
         validator_addresses+=("$addr")
-      elif [[ $line == SEQUENCER:* ]]; then
+      elif [[ "$line" == SEQUENCER:* ]]; then
         raw_seq="${line#SEQUENCER:}"
-        sequencer_address="$(echo -e "$raw_seq" | tr -d '\r\n' | xargs)"
-        echo "[DEBUG] Sequencer raw=\"$raw_seq\" | trimmed=\"$sequencer_address\""
+        sequencer_address=$(normalize_address "$raw_seq")
       fi
     done <<< "$raw_output"
 
@@ -310,10 +318,8 @@ main() {
 
       address_valid="Invalid"
       for addr in "${validator_addresses[@]}"; do
-        echo "[DEBUG] Comparing validator addr=\"$addr\" with sequencer=\"$sequencer_address\""
         if [[ "$addr" == "$sequencer_address" ]]; then
           address_valid="Valid"
-          echo "[DEBUG] Match found! Address is valid."
           break
         fi
       done
@@ -346,7 +352,9 @@ main() {
       fi
     fi
 
-    print_separator
+    if [[ "$address_valid" == "Valid" ]]; then
+      print_separator
+    fi
 
     if [[ "$address_valid" == "Invalid" ]]; then
       print_header "Cli Correction (Manual)"
@@ -366,10 +374,9 @@ main() {
     fi
 
   else
-    # Docker mode
     raw_output=$(sudo docker logs "$container_id" 2>&1 | $AWK_BIN '
       BEGIN { validator_found=0; sequencer_found=0 }
-      /validator/ && /address/ {
+      /validator/ && /address/ && $0 !~ /validator Started validator with addresses in current validator committee:/ {
         validator_found=1
         line = $0
         sub(/.*addresses?: /, "", line)
@@ -432,11 +439,9 @@ main() {
     fi
   fi
 
-  # Directory check only if Docker
   if [[ "$method" == "Docker" ]]; then
     print_header "Aztec Directory Check"
     print_bullet "Directory Path"
-
     local docker_compose_path="$workdir/docker-compose.yml"
     local env_file="$workdir/.env"
 
@@ -483,7 +488,6 @@ main() {
       if [[ "$fix_choice" =~ ^[Yy]$ ]]; then
         fix_env_validator_key_inplace "$workdir/.env"
         fix_yml_file "$workdir/docker-compose.yml" "$setup_style"
-        # Restart docker compose with new files
         if command -v docker &>/dev/null; then
           if docker compose version &>/dev/null; then
             echo "Running: docker compose up -d"
