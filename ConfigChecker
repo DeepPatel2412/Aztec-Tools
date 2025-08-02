@@ -27,7 +27,6 @@ print_header() {
 print_bullet() { printf "%s %s\n" "$bullet" "$1"; }
 print_subbullet() { printf "  %s %s %b\n" "$subbullet" "$1" "${2:-}"; }
 
-# Use this for all "Status:" lines: green for Correct, red for Incorrect
 print_status_line() {
   if [[ "$1" == "Correct" ]]; then
     printf "  %s Status: ${GREEN}Correct Setup %b${RESET}\n" "$subbullet" "$HEAVY_TICK"
@@ -265,7 +264,6 @@ main() {
   if [[ "$method" == "CLI" ]]; then
     print_bullet "Node"
 
-    # Extract addresses from docker logs exactly like Docker mode
     raw_output=$(sudo docker logs "$container_id" 2>&1 | $AWK_BIN '
       BEGIN { validator_found=0; sequencer_found=0 }
       /validator/ && /address/ {
@@ -290,8 +288,14 @@ main() {
     sequencer_address=""
     validator_addresses=()
     while IFS= read -r line; do
-      [[ $line == VALIDATOR:* ]] && validator_addresses+=("${line#VALIDATOR:}")
-      [[ $line == SEQUENCER:* ]] && sequencer_address="${line#SEQUENCER:}"
+      if [[ $line == VALIDATOR:* ]]; then
+        addr="${line#VALIDATOR:}"
+        addr="$(echo -e "${addr}" | tr -d '[:space:]')"
+        validator_addresses+=("$addr")
+      elif [[ $line == SEQUENCER:* ]]; then
+        sequencer_address="${line#SEQUENCER:}"
+        sequencer_address="$(echo -e "${sequencer_address}" | tr -d '[:space:]')"
+      fi
     done <<< "$raw_output"
 
     if [[ -z "$sequencer_address" || ${#validator_addresses[@]} -eq 0 ]]; then
@@ -299,7 +303,6 @@ main() {
     else
       print_subbullet "Status: Found" "$tick"
 
-      # Validate sequencer address against validators
       address_valid="Invalid"
       for addr in "${validator_addresses[@]}"; do
         if [[ "$addr" == "$sequencer_address" ]]; then
@@ -313,14 +316,18 @@ main() {
 
       print_bullet "Validator Addresses"
       for addr in "${validator_addresses[@]}"; do
-        if [[ "$address_valid" == "Valid" ]]; then
-          if [[ "$addr" == "$sequencer_address" ]]; then
+        if [[ "$addr" == "$sequencer_address" ]]; then
+          if [[ "$address_valid" == "Valid" ]]; then
             print_subbullet "$addr" "$HEAVY_TICK"
           else
-            print_subbullet "$addr"
+            print_subbullet "$addr" "$cross"
           fi
         else
-          print_subbullet "$addr" "$cross"
+          if [[ "$address_valid" == "Valid" ]]; then
+            print_subbullet "$addr"
+          else
+            print_subbullet "$addr" "$cross"
+          fi
         fi
       done
 
@@ -334,7 +341,6 @@ main() {
 
     print_separator
 
-    # CLI invalid correction instructions footer
     if [[ "$address_valid" == "Invalid" ]]; then
       print_header "Cli Correction (Manual)"
       echo "● Stop Node and Screen"
@@ -353,8 +359,7 @@ main() {
     fi
 
   else
-    # Docker mode (your original Docker logic)
-
+    # Docker mode
     raw_output=$(sudo docker logs "$container_id" 2>&1 | $AWK_BIN '
       BEGIN { validator_found=0; sequencer_found=0 }
       /validator/ && /address/ {
@@ -394,7 +399,6 @@ main() {
       print_bullet "Node"
       print_subbullet "Status: Found" "$tick"
 
-      # Validate sequencer address against validators
       address_valid="Invalid"
       for addr in "${validator_addresses[@]}"; do
         if [[ "$addr" == "$sequencer_address" ]]; then
@@ -421,10 +425,11 @@ main() {
     fi
   fi
 
-  print_header "Aztec Directory Check"
-  print_bullet "Directory Path"
-
+  # Directory check only if Docker
   if [[ "$method" == "Docker" ]]; then
+    print_header "Aztec Directory Check"
+    print_bullet "Directory Path"
+
     local docker_compose_path="$workdir/docker-compose.yml"
     local env_file="$workdir/.env"
 
@@ -463,19 +468,12 @@ main() {
     check_env_validator_only_status "$env_file"
     env_status=$?
     (( env_status == 1 )) && print_correction_prompt=1
-  else
-    print_subbullet "Docker Compose Check: Skipped (CLI mode)" "$tick"
-    check_env_validator_only_status "$env_file_default"
-    env_status=$?
-    (( env_status == 1 )) && print_correction_prompt=1
-  fi
 
-  print_separator
+    print_separator
 
-  if (( print_correction_prompt == 1 )); then
-    read -rp "Would you like to correct the setup? y/n : " fix_choice
-    if [[ "$fix_choice" =~ ^[Yy]$ ]]; then
-      if [[ "$method" == "Docker" ]]; then
+    if (( print_correction_prompt == 1 )); then
+      read -rp "Would you like to correct the setup? y/n : " fix_choice
+      if [[ "$fix_choice" =~ ^[Yy]$ ]]; then
         fix_env_validator_key_inplace "$workdir/.env"
         fix_yml_file "$workdir/docker-compose.yml" "$setup_style"
         # Restart docker compose with new files
@@ -496,13 +494,10 @@ main() {
           echo "Setup Fixed: Single Setup"
         fi
       else
-        fix_env_validator_key_inplace "$env_file_default"
-        echo "Setup Fixed: Single Setup"
+        echo "No changes made."
       fi
-    else
-      echo "No changes made."
+      print_separator
     fi
-    print_separator
   fi
 }
 
