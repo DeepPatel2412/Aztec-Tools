@@ -165,7 +165,7 @@ fix_yml_file() {
 services:
   aztec-node:
     container_name: aztec-sequencer
-    image: aztecprotocol/aztec:1.2.0
+    image: aztecprotocol/aztec:1.2.1
     restart: unless-stopped
     environment:
       ETHEREUM_HOSTS: \${ETHEREUM_RPC_URL}
@@ -190,7 +190,7 @@ EOF
 services:
   aztec-node:
     container_name: aztec-sequencer
-    image: aztecprotocol/aztec:1.2.0
+    image: aztecprotocol/aztec:1.2.1
     restart: unless-stopped
     environment:
       ETHEREUM_HOSTS: \${ETHEREUM_RPC_URL}
