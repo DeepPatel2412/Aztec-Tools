@@ -589,13 +589,13 @@ main() {
     fi
   fi
 
-  # Print separator and exit early if method is CLI (no directory check)
+  # If method is CLI
   if [[ "$method" != "Docker" ]]; then
     print_separator
     return 0
   fi
 
-  # Proceed to Aztec Directory Check only for Docker method
+  # Proceed only if method = Docker
   print_header "Aztec Directory Check"
   print_bullet "Directory Path"
   local docker_compose_path="$workdir/docker-compose.yml"
@@ -605,7 +605,11 @@ main() {
   local yaml_valid=0
   local env_check_result=0
 
+  local yml_found=0
+  local env_found=0
+
   if [[ -f "$docker_compose_path" ]]; then
+    yml_found=1
     print_subbullet "yml: Found" "$tick"
     setup_style=$(check_yml_validator_and_multi "$docker_compose_path")
     yaml_valid=$?
@@ -616,10 +620,10 @@ main() {
     fi
   else
     print_subbullet "yml: Not Found" "$cross"
-    print_correction_prompt=1
   fi
 
   if [[ -f "$env_file" ]]; then
+    env_found=1
     print_subbullet "env: Found" "$tick"
     if check_all_env_keys_status "$env_file" "$setup_style"; then
       env_check_result=0
@@ -629,7 +633,13 @@ main() {
     fi
   else
     print_subbullet "env: Not Found" "$cross"
-    print_correction_prompt=1
+  fi
+
+  # If both yml and env missing, do not prompt correction
+  if (( yml_found == 0 && env_found == 0 )); then
+    print_correction_prompt=0
+    print_separator
+    return 0
   fi
 
   if (( yaml_valid == 0 )); then
