@@ -189,7 +189,7 @@ echo -e "Beacon RPC    : $( [[ ${BEACON_OK:-0} -eq 1 ]] && echo -e "${GREEN}OK${
 [[ -n "$HEAD" ]] && echo -e "Total Blobs   : $TOTAL_BLOBS"
 [[ -n "$HEAD" ]] && echo -e "Blob Errors   : $BLOB_FETCH_ERRORS/$TOTAL"
 sep_dashes
-echo -e "Verdict - $VERDICT"
+echo -e "Verdict : $VERDICT"
 sep_dashes
 echo -e "Rate Tiers:"
 echo -e "S ≥ 200       (Kage)"
