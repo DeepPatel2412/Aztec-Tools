@@ -1,195 +1,174 @@
-clear
 #!/bin/bash
+clear  # Clear the terminal at the very start
+
 # Colors
 BLUE='\e[0;34m'
 GREEN='\e[0;32m'
+CYAN='\e[0;36m'
 YELLOW='\e[0;33m'
 RED='\e[0;31m'
 RESET='\e[0m'
 
-# Separator settings (width)
 SEP_WIDTH=50
 sep_equals() { printf '=%.0s' $(seq 1 $SEP_WIDTH); echo; }
 sep_dashes() { printf -- '-%.0s' $(seq 1 $SEP_WIDTH); echo; }
-
-# Function to center text between separators
 center_text() {
     local text="$1"
     local padding=$(( (SEP_WIDTH - ${#text}) / 2 ))
     printf "%*s%s%*s\n" $padding "" "$text" $padding ""
 }
 
-# --- RPC Endpoint Input ---
+# --- Header ---
 sep_equals
-center_text "RPC Health Check - By Creed"
+center_text "ETHEREUM NODE HEALTH CHECKER"
 sep_equals
 
+# --- RPC input ---
 echo -e "\n● RPC Endpoints"
 read -rp "Enter Sepolia RPC URL: " SEPOLIA_RPC
-echo -ne "\033[1A\033[K"
-echo -e "Sepolia RPC Set ${GREEN}✓${RESET}"
+echo -ne "\033[1A\033[K"; echo -e "Sepolia RPC Set ${GREEN}✓${RESET}"
 read -rp "Enter Beacon RPC URL : " BEACON_RPC
-echo -ne "\033[1A\033[K"
-echo -e "Beacon RPC Set ${GREEN}✓${RESET}"
+echo -ne "\033[1A\033[K"; echo -e "Beacon RPC Set ${GREEN}✓${RESET}"
 
-# --- Sepolia Execution RPC Check ---
+# --- Sepolia check ---
 echo -e "\n● Sepolia RPC Check"
-RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$SEPOLIA_RPC" -H "Content-Type: application/json" \
-  --data '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}')
+RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$SEPOLIA_RPC" \
+ -H "Content-Type: application/json" \
+ --data '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}')
 HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
 BODY=$(echo "$RESPONSE" | sed '$d')
 if [[ "$HTTP_CODE" == "200" ]]; then
-  BLOCKNUM=$(echo "$BODY" | jq -r '.result' 2>/dev/null)
-  if [[ "$BLOCKNUM" != "null" && "$BLOCKNUM" != "" ]]; then
-    DEC_BLOCKNUM=$((16#${BLOCKNUM:2}))
-    echo -e "${GREEN}✓ Healthy${RESET} (Block: ${DEC_BLOCKNUM})"
-    SEPOLIA_OK=1
-  else
-    echo -e "${RED}✗ Unhealthy${RESET}"
-    SEPOLIA_OK=0
-  fi
+    BLOCKNUM=$(echo "$BODY" | jq -r '.result' 2>/dev/null)
+    if [[ "$BLOCKNUM" != "null" && "$BLOCKNUM" != "" ]]; then
+        DEC_BLOCKNUM=$((16#${BLOCKNUM:2}))
+        echo -e "${GREEN}✓ Healthy${RESET} (Block: ${DEC_BLOCKNUM})"
+        SEPOLIA_OK=1
+    else
+        echo -e "${RED}✗ Unhealthy${RESET}"; SEPOLIA_OK=0
+    fi
 else
-  echo -e "${RED}✗ Unreachable (HTTP $HTTP_CODE)${RESET}"
-  SEPOLIA_OK=0
+    echo -e "${RED}✗ Unreachable (HTTP $HTTP_CODE)${RESET}"; SEPOLIA_OK=0
 fi
 
-# --- Beacon RPC Check ---
+# --- Beacon check ---
 echo -e "\n● Beacon Node Check"
 BEACON_RESPONSE=$(curl -s -w "\n%{http_code}" --max-time 5 "$BEACON_RPC/eth/v1/node/version")
 BEACON_HTTP_CODE=$(echo "$BEACON_RESPONSE" | tail -n1)
 BEACON_BODY=$(echo "$BEACON_RESPONSE" | sed '$d')
 if [[ "$BEACON_HTTP_CODE" == "200" ]]; then
-  VER=$(echo "$BEACON_BODY" | jq -r '.data.version' 2>/dev/null)
-  if [[ "$VER" && "$VER" != "null" ]]; then
-    echo -e "${GREEN}✓ Reachable${RESET} (Version: ${VER})"
-    BEACON_OK=1
-  else
-    echo -e "${YELLOW}⚠ Invalid JSON response format${RESET}"
-    BEACON_OK=0
-  fi
+    VER=$(echo "$BEACON_BODY" | jq -r '.data.version' 2>/dev/null)
+    if [[ "$VER" && "$VER" != "null" ]]; then
+        echo -e "${GREEN}✓ Reachable${RESET} (Version: ${VER})"
+        BEACON_OK=1
+    else
+        echo -e "${YELLOW}⚠ Invalid JSON response format${RESET}"; BEACON_OK=0
+    fi
 else
-  echo -e "${RED}✗ Unreachable (HTTP $BEACON_HTTP_CODE)${RESET}"
-  BEACON_OK=0
+    echo -e "${RED}✗ Unreachable (HTTP $BEACON_HTTP_CODE)${RESET}"; BEACON_OK=0
 fi
 
-# --- Get Head Slot ---
+# --- Head slot ---
 HEAD=""
 if [[ $BEACON_OK -eq 1 ]]; then
-  HEAD_RESPONSE=$(curl -s -w "\n%{http_code}" --max-time 5 "$BEACON_RPC/eth/v1/beacon/headers/head")
-  HEAD_HTTP_CODE=$(echo "$HEAD_RESPONSE" | tail -n1)
-  HEAD_BODY=$(echo "$HEAD_RESPONSE" | sed '$d')
-  if [[ "$HEAD_HTTP_CODE" == "200" ]]; then
-    HEAD=$(echo "$HEAD_BODY" | jq -r '.data.header.message.slot' 2>/dev/null)
-    if ! [[ "$HEAD" =~ ^[0-9]+$ ]]; then
-      echo -e "${YELLOW}⚠ Failed to get head slot${RESET}"
-      HEAD=""
+    HEAD_RESPONSE=$(curl -s -w "\n%{http_code}" --max-time 5 "$BEACON_RPC/eth/v1/beacon/headers/head")
+    HEAD_HTTP_CODE=$(echo "$HEAD_RESPONSE" | tail -n1)
+    HEAD_BODY=$(echo "$HEAD_RESPONSE" | sed '$d')
+    if [[ "$HEAD_HTTP_CODE" == "200" ]]; then
+        HEAD=$(echo "$HEAD_BODY" | jq -r '.data.header.message.slot' 2>/dev/null)
+        [[ ! "$HEAD" =~ ^[0-9]+$ ]] && HEAD=""
     fi
-  else
-    echo -e "${YELLOW}⚠ Failed to get head slot (HTTP $HEAD_HTTP_CODE)${RESET}"
-    HEAD=""
-  fi
 fi
 
-# --- Blob Sidecars Check (old detailed style) ---
+# --- Blob sidecars check ---
 if [[ -n "$HEAD" ]]; then
-  echo -e "\n● Blob Sidecars Check (Last 10 Slots)"
-  TOTAL=10
-  SLOTS_WITH_BLOBS=0
-  TOTAL_BLOBS=0
-  BLOB_FETCH_ERRORS=0
-  BLOB_FETCH_ERROR_SLOTS=()
+    echo -e "\n● Blob Sidecars Check (Last 10 Slots)"
+    TOTAL=10; SLOTS_WITH_BLOBS=0; TOTAL_BLOBS=0; BLOB_FETCH_ERRORS=0
+    for ((i=0; i<TOTAL; i++)); do
+        SLOT=$((HEAD-i))
+        BLOB_RESPONSE=$(curl -s -w "\n%{http_code}" --max-time 10 "$BEACON_RPC/eth/v1/beacon/blob_sidecars/$SLOT")
+        BLOB_HTTP_CODE=$(echo "$BLOB_RESPONSE" | tail -n1)
+        BLOB_BODY=$(echo "$BLOB_RESPONSE" | sed '$d')
+        N=$(echo "$BLOB_BODY" | jq -r '.data | length' 2>/dev/null)
+        if [[ "$BLOB_HTTP_CODE" == "200" && "$N" =~ ^[1-9][0-9]*$ ]]; then
+            echo -e "${GREEN}✓ Slot $SLOT: Fetch success, $N blob(s)${RESET}"
+            ((SLOTS_WITH_BLOBS++)); ((TOTAL_BLOBS+=N))
+        else
+            echo -e "${RED}✗ Slot $SLOT: No blobs or fetch failed${RESET}"
+            ((BLOB_FETCH_ERRORS++))
+        fi
+    done
+    SUCCESS_RATE=$((SLOTS_WITH_BLOBS*100/TOTAL))
+    if (( SUCCESS_RATE < 40 )); then STATUS="${RED}CRITICAL${RESET}"
+    elif (( SUCCESS_RATE < 70 )); then STATUS="${YELLOW}WARNING${RESET}"
+    else STATUS="${GREEN}HEALTHY${RESET}"; fi
 
-  for ((i=0; i<10; i++)); do
-    SLOT=$((HEAD-i))
-    BLOB_RESPONSE=$(curl -s -w "\n%{http_code}" --max-time 10 "$BEACON_RPC/eth/v1/beacon/blob_sidecars/$SLOT")
-    BLOB_HTTP_CODE=$(echo "$BLOB_RESPONSE" | tail -n1)
-    BLOB_BODY=$(echo "$BLOB_RESPONSE" | sed '$d')
-    N=$(echo "$BLOB_BODY" | jq -r '.data | length' 2>/dev/null)
+    # --- Burst / Rate limit test ---
+    echo -e "\n● Rate Limiting Check (100-req burst)"
+    TARGET_ENDPOINT="$BEACON_RPC/eth/v1/beacon/blob_sidecars/head"
+    REQS=100
+    START_MS=$(date +%s%3N)
+    HTTP_CODES=$(seq 1 $REQS | xargs -P$REQS -I{} \
+        curl -s -o /dev/null -w "%{http_code}\n" --max-time 5 "$TARGET_ENDPOINT")
+    END_MS=$(date +%s%3N)
+    ELAPSED_MS=$((END_MS - START_MS))
+    RPS=$(awk "BEGIN {print $REQS/($ELAPSED_MS/1000)}")
 
-    if [[ "$BLOB_HTTP_CODE" == "200" ]]; then
-      if [[ "$N" =~ ^[1-9][0-9]*$ ]]; then
-        echo -e "${GREEN}✓ Slot $SLOT: Fetch success, $N blob(s)${RESET}"
-        ((SLOTS_WITH_BLOBS++))
-        ((TOTAL_BLOBS+=N))
-      else
-        echo -e "${RED}✗ Slot $SLOT: Fetch success, but no blobs found${RESET}"
-        ((BLOB_FETCH_ERRORS++))
-        BLOB_FETCH_ERROR_SLOTS+=("$SLOT")
-      fi
+    if echo "$HTTP_CODES" | grep -q "429"; then
+        RL_COUNT=$(echo "$HTTP_CODES" | grep -c "429")
+        echo -e "${RED}✗ Rate limit detected ($RL_COUNT/$REQS HTTP 429)${RESET}"
     else
-      echo -e "${RED}✗ Slot $SLOT: Fetch failed (HTTP $BLOB_HTTP_CODE)${RESET}"
-      ((BLOB_FETCH_ERRORS++))
-      BLOB_FETCH_ERROR_SLOTS+=("$SLOT")
+        echo -e "${GREEN}✓ No rate limiting detected${RESET}"
     fi
-  done
-
-  SUCCESS_RATE=$(awk -v s="$SLOTS_WITH_BLOBS" -v t="$TOTAL" 'BEGIN { printf "%.2f", (s/t)*100 }')
-  if (( $(echo "$SUCCESS_RATE < 25" | bc -l) )); then
-    STATUS="${RED}CRITICAL${RESET}"
-  elif (( $(echo "$SUCCESS_RATE < 75" | bc -l) )); then
-    STATUS="${YELLOW}WARNING${RESET}"
-  else
-    STATUS="${GREEN}HEALTHY${RESET}"
-  fi
-
-  # --- Beacon Burst Rate Limit Test ---
-  echo -e "\n● Rate Limiting Check (100-req burst)"
-  TARGET_ENDPOINT="$BEACON_RPC/eth/v1/beacon/blob_sidecars/head"
-  REQS=100
-  START_MS=$(date +%s%3N)
-  HTTP_CODES=$(seq 1 $REQS | xargs -n1 -P$REQS -I{} \
-    curl -s -o /dev/null -w "%{http_code}\n" --max-time 5 "$TARGET_ENDPOINT" 2>/dev/null)
-  END_MS=$(date +%s%3N)
-  ELAPSED_MS=$((END_MS - START_MS))
-  RPS=$(awk "BEGIN {print $REQS/($ELAPSED_MS/1000)}")
-
-  if echo "$HTTP_CODES" | grep -q "429"; then
-    RL_COUNT=$(echo "$HTTP_CODES" | grep -c "429")
-    echo -e "${RED}✗ Rate limit detected ($RL_COUNT/$REQS HTTP 429)${RESET}"
-  else
-    echo -e "${GREEN}✓ No rate limiting detected${RESET}"
-  fi
-  echo "Completed in ${ELAPSED_MS} ms (~${RPS} req/sec)"
-
-  # --- Tier classification ---
-  if (( $(echo "$RPS >= 200" | bc -l) )); then
-    TIER="${GREEN}Tier S - Kage${RESET}"
-  elif (( $(echo "$RPS >= 100" | bc -l) )); then
-    TIER="${GREEN}Tier A - Jonin${RESET}"
-  elif (( $(echo "$RPS >= 50" | bc -l) )); then
-    TIER="${YELLOW}Tier B - Chunin${RESET}"
-  else
-    TIER="${RED}Tier C - Genin${RESET}"
-  fi
+    echo "Completed in ${ELAPSED_MS} ms (~${RPS} req/sec)"
 fi
 
-# --- Verdict ---
-if [[ ${SEPOLIA_OK:-0} -ne 1 || ${BEACON_OK:-0} -ne 1 ]]; then
-  VERDICT="${RED}Not Suitable for Node${RESET}"
+# --- Assign Tier ---
+if (( $(echo "$RPS >= 200" | bc -l) )); then
+    TIER_STRING="Tier S - Kage"
+elif (( $(echo "$RPS >= 100" | bc -l) )); then
+    TIER_STRING="Tier A - Jonin"
+elif (( $(echo "$RPS >= 50" | bc -l) )); then
+    TIER_STRING="Tier B - Chunin"
 else
-  if [[ "$STATUS" == *"HEALTHY"* && "$TIER" == *"Kage"* ]]; then
-    VERDICT="${GREEN}Enterprise Ready - Kage Node${RESET}"
-  elif [[ "$STATUS" == *"HEALTHY"* && "$TIER" == *"Jonin"* ]]; then
-    VERDICT="${GREEN}Production Ready - Jonin Node${RESET}"
-  elif [[ "$STATUS" == *"HEALTHY"* && "$TIER" == *"Chunin"* ]]; then
-    VERDICT="${YELLOW}Unstable / Average - Chunin Node${RESET}"
-  else
-    VERDICT="${RED}Not Suitable - Genin Node${RESET}"
-  fi
+    TIER_STRING="Tier C - Genin"
+fi
+
+# --- Verdict Logic ---
+if [[ ${SEPOLIA_OK:-0} -ne 1 || ${BEACON_OK:-0} -ne 1 ]]; then
+    VERDICT="${RED}Not Suitable for Node${RESET}"
+else
+    if (( SUCCESS_RATE >= 70 )); then
+        case "$TIER_STRING" in
+            "Tier S - Kage") VERDICT="${GREEN}Enterprise – Kage Node${RESET}" ;;
+            "Tier A - Jonin") VERDICT="${GREEN}Production – Jonin Node${RESET}" ;;
+            "Tier B - Chunin") VERDICT="${CYAN}Stable – Chunin Node${RESET}" ;;
+            "Tier C - Genin") VERDICT="${CYAN}Stable – Genin Node${RESET}" ;;
+        esac
+    elif (( SUCCESS_RATE >= 40 )); then
+        case "$TIER_STRING" in
+            "Tier S - Kage") VERDICT="${GREEN}Production – Kage Node${RESET}" ;;
+            "Tier A - Jonin") VERDICT="${CYAN}Stable – Jonin Node${RESET}" ;;
+            "Tier B - Chunin") VERDICT="${YELLOW}Unstable – Chunin Node${RESET}" ;;
+            "Tier C - Genin") VERDICT="${YELLOW}Unstable – Genin Node${RESET}" ;;
+        esac
+    else
+        VERDICT="${RED}Not Suitable${RESET}"
+    fi
 fi
 
 # --- Summary ---
 sep_equals
-center_text "Shinobi Rank"
+center_text "Summary"
 sep_equals
 echo -e "Sepolia RPC   : $( [[ ${SEPOLIA_OK:-0} -eq 1 ]] && echo -e "${GREEN}OK${RESET}" || echo -e "${RED}FAIL${RESET}" )"
 echo -e "Beacon RPC    : $( [[ ${BEACON_OK:-0} -eq 1 ]] && echo -e "${GREEN}OK${RESET}" || echo -e "${RED}FAIL${RESET}" )"
-[[ -n "$HEAD" ]] && echo -e "Rate Tier     : $TIER"
-[[ -n "$HEAD" ]] && echo -e "Blob Success  : $SLOTS_WITH_BLOBS/$TOTAL slots ($SUCCESS_RATE%) -> $STATUS"
+[[ -n "$HEAD" ]] && echo -e "Blob Health   : $STATUS"
+[[ -n "$HEAD" ]] && echo -e "Rate Tier     : ${TIER_STRING}"
+[[ -n "$HEAD" ]] && echo -e "Blob Success  : $SLOTS_WITH_BLOBS/$TOTAL slots (${SUCCESS_RATE}%)"
 [[ -n "$HEAD" ]] && echo -e "Total Blobs   : $TOTAL_BLOBS"
 [[ -n "$HEAD" ]] && echo -e "Blob Errors   : $BLOB_FETCH_ERRORS/$TOTAL"
 sep_dashes
-echo -e "Verdict : $VERDICT"
+echo -e "Verdict - $VERDICT"
 sep_dashes
 echo -e "Rate Tiers:"
 echo -e "S ≥ 200       (Kage)"
