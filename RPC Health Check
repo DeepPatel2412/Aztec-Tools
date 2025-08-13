@@ -1,14 +1,58 @@
 #!/bin/bash
 clear  # Clear the terminal at the very start
 
-# Colors
-BLUE='\e[0;34m'
+# --- Dependencies check & install ---
+declare -A TOOLS=( [curl]="curl" [jq]="jq" [bc]="bc" [gawk]="gawk" )
+
+# Determine OS package manager and install commands
+if command -v dnf &> /dev/null; then
+    INSTALL_CMD="dnf install -qy"
+elif command -v apt-get &> /dev/null; then
+    INSTALL_CMD="apt-get install -qqy"
+elif command -v pacman &> /dev/null; then
+    INSTALL_CMD="pacman -S --noconfirm --needed"
+else
+    echo "Unsupported package manager. Please install dependencies manually:"
+    printf '%s\n' "${TOOLS[@]}"
+    exit 1
+fi
+
+# Check and install dependencies only if missing
+for tool in "${!TOOLS[@]}"; do
+    if ! command -v "$tool" &> /dev/null; then
+        if ! $INSTALL_CMD "${TOOLS[$tool]}" &> /dev/null; then
+            :
+        fi
+    fi
+done
+
+# --- Tools status ---
+FOUND=0; MISSING=()
+for tool in "${!TOOLS[@]}"; do
+    if command -v "$tool" &> /dev/null; then
+        ((FOUND++))
+    else
+        MISSING+=("${TOOLS[$tool]}")
+    fi
+done
+
+# --- Colors ---
 GREEN='\e[0;32m'
-CYAN='\e[0;36m'
-YELLOW='\e[0;33m'
 RED='\e[0;31m'
+YELLOW='\e[0;33m'
+BLUE='\e[0;34m'
+CYAN='\e[0;36m'
 RESET='\e[0m'
 
+if (( FOUND == 4 )); then
+    TOOL_STATUS="${GREEN}Found (4/4) ✓${RESET}"
+elif (( ${#MISSING[@]} > 0 )); then
+    TOOL_STATUS="${RED}Not Found (${FOUND}/4) ✗ (${MISSING[*]})${RESET}"
+else
+    TOOL_STATUS="${YELLOW}Error (unexpected tool count)${RESET}"
+fi
+
+# --- Header and separators ---
 SEP_WIDTH=50
 sep_equals() { printf '=%.0s' $(seq 1 $SEP_WIDTH); echo; }
 sep_dashes() { printf -- '-%.0s' $(seq 1 $SEP_WIDTH); echo; }
@@ -18,10 +62,10 @@ center_text() {
     printf "%*s%s%*s\n" $padding "" "$text" $padding ""
 }
 
-# --- Header ---
 sep_equals
 center_text "ETHEREUM NODE HEALTH CHECKER"
 sep_equals
+echo -ne "Tools : $TOOL_STATUS"     # <- NO extra newline before "● RPC Endpoints"
 
 # --- RPC input ---
 echo -e "\n● RPC Endpoints"
@@ -111,7 +155,14 @@ if [[ -n "$HEAD" ]]; then
         curl -s -o /dev/null -w "%{http_code}\n" --max-time 5 "$TARGET_ENDPOINT")
     END_MS=$(date +%s%3N)
     ELAPSED_MS=$((END_MS - START_MS))
-    RPS=$(awk "BEGIN {print $REQS/($ELAPSED_MS/1000)}")
+    RPS=$(gawk "BEGIN {print $REQS/($ELAPSED_MS/1000)}")
+
+    # --- RPS sanitization ---
+    [[ -z "$RPS" ]] && RPS=0
+    RPS=$(echo "$RPS" | tr ',' '.')  # Ensure decimal dot, not comma
+    if ! [[ "$RPS" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+        RPS=0
+    fi
 
     if echo "$HTTP_CODES" | grep -q "429"; then
         RL_COUNT=$(echo "$HTTP_CODES" | grep -c "429")
@@ -168,11 +219,11 @@ echo -e "Beacon RPC    : $( [[ ${BEACON_OK:-0} -eq 1 ]] && echo -e "${GREEN}OK${
 [[ -n "$HEAD" ]] && echo -e "Total Blobs   : $TOTAL_BLOBS"
 [[ -n "$HEAD" ]] && echo -e "Blob Errors   : $BLOB_FETCH_ERRORS/$TOTAL"
 sep_dashes
-echo -e "Verdict : $VERDICT"
-sep_dashes
 echo -e "Rate Tiers:"
 echo -e "S ≥ 200       (Kage)"
 echo -e "A = 100-199   (Jonin)"
 echo -e "B = 50-99     (Chunin)"
 echo -e "C < 50        (Genin)"
-sep_dashes
+sep_equals
+echo -e "Verdict : $VERDICT"
+sep_equals
