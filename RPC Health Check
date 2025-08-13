@@ -175,3 +175,4 @@ echo -e "S ≥ 200       (Kage)"
 echo -e "A = 100-199   (Jonin)"
 echo -e "B = 50-99     (Chunin)"
 echo -e "C < 50        (Genin)"
+sep_dashes
