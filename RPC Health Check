@@ -1,11 +1,47 @@
 #!/bin/bash
 clear
 
-# --- Force safe locale for all users ---
+# --- Force safe locale and robust PATH for all users ---
 export LC_ALL=C
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
-# --- Dependencies check & install ---
+# --- Tools and distro-specific install commands ---
 declare -A TOOLS=([curl]="curl" [jq]="jq" [bc]="bc" [gawk]="gawk")
+
+print_separator() {
+    printf '=%.0s' {1..50}; echo
+}
+
+print_header() {
+    print_separator
+    printf '%26s\n' "Tools Checker"
+    print_separator
+}
+
+print_tool_status() {
+    local installed=()
+    local missing=()
+    for tool in "${!TOOLS[@]}"; do
+        if command -v "$tool" &>/dev/null; then
+            installed+=("$tool ✓")
+        else
+            missing+=("$tool ✗")
+        fi
+    done
+    echo "● Installed"
+    for item in "${installed[@]}"; do
+        echo "  $item"
+    done
+    if [ ${#missing[@]} -gt 0 ]; then
+        echo "● Missing"
+        for item in "${missing[@]}"; do
+            echo "  $item"
+        done
+    fi
+    print_separator
+}
+
+# --- Detect package manager ---
 if command -v dnf &>/dev/null; then
     INSTALL_CMD="dnf install -qy"
 elif command -v apt-get &>/dev/null; then
@@ -18,21 +54,96 @@ else
     exit 1
 fi
 
+# --- Step 1: Initial check and background install (silent) ---
+clear
+print_header
+echo "Checking tools before install..."
+print_tool_status
+
+MISSING=()
 for tool in "${!TOOLS[@]}"; do
     if ! command -v "$tool" &>/dev/null; then
-        $INSTALL_CMD "${TOOLS[$tool]}" &>/dev/null || true
-    fi
-done
-
-# --- Tools status ---
-FOUND=0; MISSING=()
-for tool in "${!TOOLS[@]}"; do
-    if command -v "$tool" &>/dev/null; then
-        ((FOUND++))
-    else
         MISSING+=("${TOOLS[$tool]}")
     fi
 done
+
+if [ ${#MISSING[@]} -gt 0 ]; then
+    if [ $(id -u) -eq 0 ]; then
+        for t in "${!TOOLS[@]}"; do
+            if ! command -v "$t" &>/dev/null; then
+                $INSTALL_CMD "${TOOLS[$t]}" >/dev/null 2>&1 || true
+            fi
+        done
+    else
+        for t in "${!TOOLS[@]}"; do
+            if ! command -v "$t" &>/dev/null; then
+                sudo --non-interactive --validate >/dev/null 2>&1 &&
+                sudo $INSTALL_CMD "${TOOLS[$t]}" >/dev/null 2>&1 || true
+            fi
+        done
+    fi
+fi
+
+# --- After install, show status again ---
+clear
+print_header
+echo "Checking tools after install..."
+print_tool_status
+
+# --- Step 2: Still missing? Prompt for root password ---
+MISSING=()
+for tool in "${!TOOLS[@]}"; do
+    if ! command -v "$tool" &>/dev/null; then
+        MISSING+=("${TOOLS[$tool]}")
+    fi
+done
+
+if [ ${#MISSING[@]} -gt 0 ] && [ $(id -u) -ne 0 ]; then
+    print_header
+    echo "● Retrying with root access"
+    print_separator
+    INSTALL_CMD="for t in ${MISSING[*]}; do $INSTALL_CMD \"\$t\" >/dev/null 2>&1 || true; done"
+    printf "Enter Password (will show visibly): "
+    stty echo
+    read -r SUDO_PASS
+    stty -echo
+    echo -en "\r\033[K"
+    if echo "$SUDO_PASS" | sudo -S sh -c "$INSTALL_CMD"; then
+        echo "Root Access Enabled ✓"
+    else
+        echo "Root Access Failed ✗"
+    fi
+    print_separator
+    clear
+    print_header
+    echo "Checking tools after root access..."
+    print_tool_status
+elif [ ${#MISSING[@]} -gt 0 ]; then
+    echo "WARNING: Running as root, but some tools still missing. Please check."
+fi
+
+# --- Final check: Exit if anything is still missing ---
+STILL_MISSING=()
+for tool in "${!TOOLS[@]}"; do
+    if ! command -v "$tool" &>/dev/null; then
+        STILL_MISSING+=("${TOOLS[$tool]}")
+    fi
+done
+
+if [ ${#STILL_MISSING[@]} -gt 0 ]; then
+    print_header
+    echo "Critical Tools Missing: ${STILL_MISSING[*]}"
+    echo "Cannot proceed. Install them manually."
+    print_separator
+    exit 1
+fi
+
+# --- Tools are good, proceed to main checks ---
+clear
+print_separator
+echo "All required tools found. Proceeding to main checks... ✓"
+print_separator
+clear
 
 # --- Colors ---
 RED='\e[0;31m'
@@ -42,15 +153,25 @@ BLUE='\e[0;34m'
 CYAN='\e[0;36m'
 RESET='\e[0m'
 
+# --- Tools status for main display ---
+FOUND=0; MISSING_DISPLAY=()
+for tool in "${!TOOLS[@]}"; do
+    if command -v "$tool" &>/dev/null; then
+        ((FOUND++))
+    else
+        MISSING_DISPLAY+=("${TOOLS[$tool]}")
+    fi
+done
+
 if (( FOUND == 4 )); then
     TOOL_STATUS="${GREEN}Found (4/4) ✓${RESET}"
-elif (( ${#MISSING[@]} > 0 )); then
-    TOOL_STATUS="${RED}Not Found (${FOUND}/4) ✗ (${MISSING[*]})${RESET}"
+elif (( ${#MISSING_DISPLAY[@]} > 0 )); then
+    TOOL_STATUS="${RED}Not Found (${FOUND}/4) ✗ (${MISSING_DISPLAY[*]})${RESET}"
 else
     TOOL_STATUS="${YELLOW}Error (unexpected tool count)${RESET}"
 fi
 
-# --- Header and separators ---
+# --- Header and separators (for main script style) ---
 SEP_WIDTH=50
 sep_equals() { printf '=%.0s' $(seq 1 $SEP_WIDTH); echo; }
 sep_dashes() { printf -- '-%.0s' $(seq 1 $SEP_WIDTH); echo; }
@@ -63,14 +184,16 @@ center_text() {
 sep_equals
 center_text "ETHEREUM NODE HEALTH CHECKER"
 sep_equals
-echo -en "Tools : $TOOL_STATUS"
+echo -en "Tools : ${TOOL_STATUS}"
 
 # --- RPC input ---
 echo -e "\n● RPC Endpoints"
 read -rp "Enter Sepolia RPC URL: " SEPOLIA_RPC
-echo -ne "\033[1A\033[K"; echo -e "Sepolia RPC Set ${GREEN}✓${RESET}"
+echo -ne "\033[1A\033[K"
+echo -e "Sepolia RPC Set ${GREEN}✓${RESET}"
 read -rp "Enter Beacon RPC URL : " BEACON_RPC
-echo -ne "\033[1A\033[K"; echo -e "Beacon RPC Set ${GREEN}✓${RESET}"
+echo -ne "\033[1A\033[K"
+echo -e "Beacon RPC Set ${GREEN}✓${RESET}"
 
 # --- Sepolia RPC check ---
 echo -e "\n● Sepolia RPC Check"
@@ -156,7 +279,7 @@ if [[ -n "$HEAD" ]]; then
     END_MS=$(date +%s%3N)
     ELAPSED_MS=$((END_MS - START_MS))
 
-    # --- RPS calculation, ULTRA ROBUST ---
+    # --- RPS calculation ---
     ELAPSED_MS=${ELAPSED_MS:-1}
     ELAPSED_MS=$(echo "$ELAPSED_MS" | tr -cd '0-9')
     ELAPSED_MS=${ELAPSED_MS:-1}
@@ -178,7 +301,7 @@ if [[ -n "$HEAD" ]]; then
     fi
     echo "Completed in ${ELAPSED_MS} ms (~${RPS} req/sec)"
 
-    # --- Tier assignment, 100% safe ---
+    # --- Tier assignment ---
     get_tier() {
         local rps="$1"
         [[ -z "$rps" ]] && echo "Tier C - Genin" && return
