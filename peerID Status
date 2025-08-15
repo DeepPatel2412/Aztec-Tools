@@ -53,8 +53,8 @@ if [ -n "$peerid" ]; then
     if [ -n "$stats" ]; then
       printf "\e[G\e[K\e[?25h\e[1;32m ● Nethermind Stats Found ✔\e[0m\n\n"
       IFS=$'\t' read -r last first country lat lon <<< "$stats"
-      last_local=$(date -d "$last" "+%Y-%m%d - %H:%M" 2>/dev/null || echo "$last")
-      first_local=$(date -d "$first" "+%Y-%m%d - %H:%M" 2>/dev/null || echo "$first")
+      last_local=$(date -d "$last" "+%d-%m-%Y - %H:%M" 2>/dev/null || echo "$last")
+      first_local=$(date -d "$first" "+%d-%m-%Y - %H:%M" 2>/dev/null || echo "$first")
       printf "%-12s: %s\n" "Last Seen"   "$last_local"
       printf "%-12s: %s\n" "First Seen"  "$first_local"
       printf "%-12s: %s\n" "Country"     "$country"
