@@ -1,11 +1,15 @@
 #!/bin/bash
 clear
 
-# --- Force safe locale and robust PATH for all users ---
+################################################################################
+# Environment & Tool Setup
+################################################################################
+
+# Ensure robust shell environment (locale, PATH)
 export LC_ALL=C
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
-# --- Tools and distro-specific install commands ---
+# Essential tools list
 declare -A TOOLS=([curl]="curl" [jq]="jq" [bc]="bc" [gawk]="gawk")
 
 print_separator() {
@@ -41,7 +45,7 @@ print_tool_status() {
     print_separator
 }
 
-# --- Detect package manager ---
+# Detect package manager and install cmd
 if command -v dnf &>/dev/null; then
     INSTALL_CMD="dnf install -qy"
 elif command -v apt-get &>/dev/null; then
@@ -54,7 +58,10 @@ else
     exit 1
 fi
 
-# --- Step 1: Initial check and background install (silent) ---
+################################################################################
+# Dependencies: Initial Check & Auto-Install (Silent)
+################################################################################
+
 clear
 print_header
 echo "Checking tools before install..."
@@ -84,13 +91,15 @@ if [ ${#MISSING[@]} -gt 0 ]; then
     fi
 fi
 
-# --- After install, show status again ---
+################################################################################
+# Dependencies: Verify Success (Prompt for Root If Needed)
+################################################################################
+
 clear
 print_header
 echo "Checking tools after install..."
 print_tool_status
 
-# --- Step 2: Still missing? Prompt for root password ---
 MISSING=()
 for tool in "${!TOOLS[@]}"; do
     if ! command -v "$tool" &>/dev/null; then
@@ -122,7 +131,10 @@ elif [ ${#MISSING[@]} -gt 0 ]; then
     echo "WARNING: Running as root, but some tools still missing. Please check."
 fi
 
-# --- Final check: Exit if anything is still missing ---
+################################################################################
+# Dependencies: Exit If Missing Critical Tools
+################################################################################
+
 STILL_MISSING=()
 for tool in "${!TOOLS[@]}"; do
     if ! command -v "$tool" &>/dev/null; then
@@ -138,14 +150,17 @@ if [ ${#STILL_MISSING[@]} -gt 0 ]; then
     exit 1
 fi
 
-# --- Tools are good, proceed to main checks ---
+################################################################################
+# Pre-Main UI Elements & Header
+################################################################################
+
 clear
 print_separator
 echo "All required tools found. Proceeding to main checks... ✓"
 print_separator
 clear
 
-# --- Colors ---
+# Colors for UI feedback
 RED='\e[0;31m'
 GREEN='\e[0;32m'
 YELLOW='\e[0;33m'
@@ -153,7 +168,7 @@ BLUE='\e[0;34m'
 CYAN='\e[0;36m'
 RESET='\e[0m'
 
-# --- Tools status for main display ---
+# Tools status for main display
 FOUND=0; MISSING_DISPLAY=()
 for tool in "${!TOOLS[@]}"; do
     if command -v "$tool" &>/dev/null; then
@@ -162,7 +177,6 @@ for tool in "${!TOOLS[@]}"; do
         MISSING_DISPLAY+=("${TOOLS[$tool]}")
     fi
 done
-
 if (( FOUND == 4 )); then
     TOOL_STATUS="${GREEN}Found (4/4) ✓${RESET}"
 elif (( ${#MISSING_DISPLAY[@]} > 0 )); then
@@ -171,7 +185,7 @@ else
     TOOL_STATUS="${YELLOW}Error (unexpected tool count)${RESET}"
 fi
 
-# --- Header and separators (for main script style) ---
+# Header/separator utils
 SEP_WIDTH=50
 sep_equals() { printf '=%.0s' $(seq 1 $SEP_WIDTH); echo; }
 sep_dashes() { printf -- '-%.0s' $(seq 1 $SEP_WIDTH); echo; }
@@ -186,21 +200,28 @@ center_text "ETHEREUM NODE HEALTH CHECKER"
 sep_equals
 echo -en "Tools : ${TOOL_STATUS}"
 
-# --- RPC input ---
+################################################################################
+# User Input: RPC Endpoints
+################################################################################
+
 echo -e "\n● RPC Endpoints"
 read -rp "Enter Sepolia RPC URL: " SEPOLIA_RPC
 echo -ne "\033[1A\033[K"
 echo -e "Sepolia RPC Set ${GREEN}✓${RESET}"
-read -rp "Enter Beacon RPC URL : " BEACON_RPC
+read -rp "Enter Beacon RPC URL: " BEACON_RPC
 echo -ne "\033[1A\033[K"
 echo -e "Beacon RPC Set ${GREEN}✓${RESET}"
 
-# --- Sepolia RPC check ---
+################################################################################
+# Sepolia RPC Check (Timeout, Connection Feedback, Clear Error State)
+################################################################################
+
 echo -e "\n● Sepolia RPC Check"
-SEPOLIA_OK=0
-SEPOLIA_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$SEPOLIA_RPC" \
+printf "✓ Trying to Connect ..."
+SEPOLIA_RESPONSE=$(curl -s --connect-timeout 5 -w "\n%{http_code}" -X POST "$SEPOLIA_RPC" \
     -H "Content-Type: application/json" \
-    --data '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}')
+    --data-raw '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}')
+printf "\r\033[K"
 SEPOLIA_HTTP_CODE=$(echo "$SEPOLIA_RESPONSE" | tail -n1)
 SEPOLIA_BODY=$(echo "$SEPOLIA_RESPONSE" | sed '$d')
 if [[ "$SEPOLIA_HTTP_CODE" == "200" ]]; then
@@ -213,13 +234,23 @@ if [[ "$SEPOLIA_HTTP_CODE" == "200" ]]; then
         echo -e "${RED}✗ Unhealthy${RESET}"
     fi
 else
-    echo -e "${RED}✗ Unreachable (HTTP $SEPOLIA_HTTP_CODE)${RESET}"
+    if [[ -z "$SEPOLIA_HTTP_CODE" || "$SEPOLIA_HTTP_CODE" == "000" ]]; then
+        echo -e "${RED}✗ Unreachable (Connection Timeout)${RESET}"
+    elif [[ "$SEPOLIA_HTTP_CODE" =~ ^[1-5][0-9]{2}$ ]]; then
+        echo -e "${RED}✗ Unreachable (HTTP $SEPOLIA_HTTP_CODE)${RESET}"
+    else
+        echo -e "${RED}✗ Unreachable (unknown error)${RESET}"
+    fi
 fi
 
-# --- Beacon Node check ---
+################################################################################
+# Beacon Node Check (Timeout, Connection Feedback, Clear Error State)
+################################################################################
+
 echo -e "\n● Beacon Node Check"
-BEACON_OK=0
-BEACON_RESPONSE=$(curl -s -w "\n%{http_code}" --max-time 5 "$BEACON_RPC/eth/v1/node/version")
+printf "✓ Trying to Connect ..."
+BEACON_RESPONSE=$(curl -s --max-time 5 -w "\n%{http_code}" "$BEACON_RPC/eth/v1/node/version")
+printf "\r\033[K"
 BEACON_HTTP_CODE=$(echo "$BEACON_RESPONSE" | tail -n1)
 BEACON_BODY=$(echo "$BEACON_RESPONSE" | sed '$d')
 if [[ "$BEACON_HTTP_CODE" == "200" ]]; then
@@ -231,13 +262,20 @@ if [[ "$BEACON_HTTP_CODE" == "200" ]]; then
         echo -e "${YELLOW}⚠ Invalid JSON response format${RESET}"
     fi
 else
-    echo -e "${RED}✗ Unreachable (HTTP $BEACON_HTTP_CODE)${RESET}"
+    if [[ -z "$BEACON_HTTP_CODE" || "$BEACON_HTTP_CODE" == "000" ]]; then
+        echo -e "${RED}✗ Unreachable (Connection Timeout)${RESET}"
+    else
+        echo -e "${RED}✗ Unreachable (HTTP $BEACON_HTTP_CODE)${RESET}"
+    fi
 fi
 
-# --- Head slot ---
+################################################################################
+# Beacon Head Slot Check
+################################################################################
+
 HEAD=""
 if [[ $BEACON_OK -eq 1 ]]; then
-    HEAD_RESPONSE=$(curl -s -w "\n%{http_code}" --max-time 5 "$BEACON_RPC/eth/v1/beacon/headers/head")
+    HEAD_RESPONSE=$(curl -s --max-time 5 -w "\n%{http_code}" "$BEACON_RPC/eth/v1/beacon/headers/head")
     HEAD_HTTP_CODE=$(echo "$HEAD_RESPONSE" | tail -n1)
     HEAD_BODY=$(echo "$HEAD_RESPONSE" | sed '$d')
     if [[ "$HEAD_HTTP_CODE" == "200" ]]; then
@@ -246,7 +284,10 @@ if [[ $BEACON_OK -eq 1 ]]; then
     fi
 fi
 
-# --- Blob sidecars check ---
+################################################################################
+# Blob Sidecars Health Check (Last 10 Slots)
+################################################################################
+
 if [[ -n "$HEAD" ]]; then
     echo -e "\n● Blob Sidecars Check (Last 10 Slots)"
     TOTAL=10; SLOTS_WITH_BLOBS=0; TOTAL_BLOBS=0; BLOB_FETCH_ERRORS=0
@@ -269,7 +310,10 @@ if [[ -n "$HEAD" ]]; then
     elif (( SUCCESS_RATE < 70 )); then STATUS="${YELLOW}WARNING${RESET}"
     else STATUS="${GREEN}HEALTHY${RESET}"; fi
 
-    # --- Rate Limiting Check ---
+    ############################################################################
+    # Rate Limiting Test (100 Sequential Requests)
+    ############################################################################
+
     echo -e "\n● Rate Limiting Check (100-req burst)"
     TARGET_ENDPOINT="$BEACON_RPC/eth/v1/beacon/blob_sidecars/head"
     REQS=100
@@ -278,21 +322,13 @@ if [[ -n "$HEAD" ]]; then
         curl -s -o /dev/null -w "%{http_code}\n" --max-time 5 "$TARGET_ENDPOINT")
     END_MS=$(date +%s%3N)
     ELAPSED_MS=$((END_MS - START_MS))
-
-    # --- RPS calculation ---
     ELAPSED_MS=${ELAPSED_MS:-1}
-    ELAPSED_MS=$(echo "$ELAPSED_MS" | tr -cd '0-9')
-    ELAPSED_MS=${ELAPSED_MS:-1}
-    REQS=$(echo "$REQS" | tr -cd '0-9')
     REQS=${REQS:-1}
-    RPS=$(gawk -v REQS="$REQS" -v ELAPSED_MS="$ELAPSED_MS" '
-        BEGIN { if (ELAPSED_MS == 0) { print 0; exit }; print REQS/(ELAPSED_MS/1000) }')
-    RPS=$(echo "$RPS" | tr ',' '.' | grep -Eo '[0-9]+(\.[0-9]*)?')
+    RPS=$(gawk -v REQS="$REQS" -v ELAPSED_MS="$ELAPSED_MS" 'BEGIN { print REQS/(ELAPSED_MS/1000) }')
     RPS=${RPS:-0}
     if ! [[ "$RPS" =~ ^[0-9]+(\.[0-9]*)?$ ]]; then
         RPS=0
     fi
-
     if echo "$HTTP_CODES" | grep -q "429"; then
         RL_COUNT=$(echo "$HTTP_CODES" | grep -c "429")
         echo -e "${RED}✗ Rate limit detected ($RL_COUNT/$REQS HTTP 429)${RESET}"
@@ -301,11 +337,14 @@ if [[ -n "$HEAD" ]]; then
     fi
     echo "Completed in ${ELAPSED_MS} ms (~${RPS} req/sec)"
 
-    # --- Tier assignment ---
+    ############################################################################
+    # Performance Tier Assignment (Fun, Inspired)
+    ############################################################################
+
     get_tier() {
         local rps="$1"
         [[ -z "$rps" ]] && echo "Tier C - Genin" && return
-        rps=$(echo "$rps" | tr ',' '.' | grep -Eo '[0-9]+(\.[0-9]*)?')
+        rps=$(echo "$RPS" | tr ',' '.' | grep -Eo '[0-9]+(\.[0-9]*)?')
         rps=${rps:-0}
         if (( $(echo "$rps >= 200" | bc -l) )); then
             echo "Tier S - Kage"
@@ -317,11 +356,13 @@ if [[ -n "$HEAD" ]]; then
             echo "Tier C - Genin"
         fi
     }
-
     TIER_STRING=$(get_tier "$RPS")
 fi
 
-# --- Verdict Logic ---
+################################################################################
+# Verdict Logic: Node Suitability & Performance Tier
+################################################################################
+
 if [[ ${SEPOLIA_OK:-0} -ne 1 || ${BEACON_OK:-0} -ne 1 ]]; then
     VERDICT="${RED}Not Suitable for Node${RESET}"
 else
@@ -344,7 +385,10 @@ else
     fi
 fi
 
-# --- Summary ---
+################################################################################
+# Final Summary Table
+################################################################################
+
 sep_equals
 center_text "Summary"
 sep_equals
