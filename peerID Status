@@ -32,7 +32,7 @@ if [ -n "$peerid" ]; then
 
   printf "\e[?25l\e[1;34mFetching stats from Nethermind Aztec Explorer...\e[0m\e[K\r"
 
-  response=$(curl -s -w "\nHTTP_STATUS_CODE:%{http_code}\n" "https://aztec.nethermind.io/api/peers?page_size=30000&latest=true")
+  response=$(curl -s -w "\nHTTP_STATUS_CODE:%{http_code}\n" "https://aztec.nethermind.io/api/peers?page_size=25&latest=true&sort=last_seen&order=desc&id=$peerid")
   http_status=$(echo "$response" | grep '^HTTP_STATUS_CODE:' | cut -d':' -f2)
   response=$(echo "$response" | grep -v '^HTTP_STATUS_CODE:')
 
