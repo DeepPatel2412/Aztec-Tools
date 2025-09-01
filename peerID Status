@@ -1,7 +1,5 @@
 #!/bin/bash
-
 clear
-
 # Extract PeerID from Docker logs (three fallback methods)
 peerid=$(sudo docker logs $(docker ps -q --filter "name=aztec" | head -1) 2>&1 | \
   grep -m 1 -ai 'DiscV5 service started' | grep -o '"peerId":"[^"]*"' | cut -d'"' -f4)
@@ -16,59 +14,16 @@ if [ -z "$peerid" ]; then
   peerid=$(sudo docker logs $(docker ps -q --filter "name=aztec" | head -1) 2>&1 | \
     grep -m 1 -ai '"peerId"' | grep -o '"peerId":"[^"]*"' | cut -d'"' -f4)
 fi
-
 header=" ● PeerID"
 if [ -n "$peerid" ]; then
   peerline="✓ $peerid"
   width=${#header}
   [ ${#peerline} -gt $width ] && width=${#peerline}
   div=$(printf -- '=%.0s' $(seq 1 $width))
-  footer=$(printf -- '-%.0s' $(seq 1 $width))
-
   echo "$div"
   echo "$header"
   echo -e "\e[1;32m$peerline\e[0m"
   echo "$div"
-
-  printf "\e[?25l\e[1;34mFetching stats from Nethermind Aztec Explorer...\e[0m\e[K\r"
-
-  response=$(curl -s -w "\nHTTP_STATUS_CODE:%{http_code}\n" "https://aztec.nethermind.io/api/peers?page_size=25&latest=true&sort=last_seen&order=desc&id=$peerid")
-  http_status=$(echo "$response" | grep '^HTTP_STATUS_CODE:' | cut -d':' -f2)
-  response=$(echo "$response" | grep -v '^HTTP_STATUS_CODE:')
-
-  if [ "$http_status" -ge 400 ]; then
-    printf "\e[G\e[K"
-    echo -e "\e[?25h\e[1;31m ● Nethermind Server Down ✗\e[0m"
-  else
-    stats=$(echo "$response" | jq -r --arg peerid "$peerid" '
-      (if .peers != null then .peers else empty end)[] |
-      select(.id == $peerid) | [
-        .last_seen,
-        .created_at,
-        .multi_addresses[0].ip_info[0].country_name,
-        (.multi_addresses[0].ip_info[0].latitude | tostring),
-        (.multi_addresses[0].ip_info[0].longitude | tostring)
-      ] | @tsv
-    ')
-    if [ -n "$stats" ]; then
-      printf "\e[G\e[K\e[?25h\e[1;32m ● Nethermind Stats Found ✔\e[0m\n\n"
-      IFS=$'\t' read -r last first country lat lon <<< "$stats"
-      last_local=$(date -d "$last" "+%d-%m-%Y - %H:%M" 2>/dev/null || echo "$last")
-      first_local=$(date -d "$first" "+%d-%m-%Y - %H:%M" 2>/dev/null || echo "$first")
-      printf "%-12s: %s\n" "Last Seen"   "$last_local"
-      printf "%-12s: %s\n" "First Seen"  "$first_local"
-      printf "%-12s: %s\n" "Country"     "$country"
-      printf "%-12s: %s\n" "Latitude"    "$lat"
-      printf "%-12s: %s\n" "Longitude"   "$lon"
-    else
-      printf "\e[G\e[K"
-      echo -e "\e[?25h\e[1;31m ● Not Found on Nethermind ✗\e[0m"
-    fi
-  fi
 else
   echo -e "\e[1;31mNo Aztec PeerID found ✗\e[0m"
-  width=16
-  footer=$(printf -- '-%.0s' $(seq 1 $width))
 fi
-
-echo "$footer"
