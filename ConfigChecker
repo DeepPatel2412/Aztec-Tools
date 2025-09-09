@@ -167,6 +167,7 @@ services:
     container_name: aztec-sequencer
     image: aztecprotocol/aztec:1.2.1
     restart: unless-stopped
+    network_mode: host
     environment:
       ETHEREUM_HOSTS: \${ETHEREUM_RPC_URL}
       L1_CONSENSUS_HOST_URLS: \${CONSENSUS_BEACON_URL}
@@ -192,6 +193,7 @@ services:
     container_name: aztec-sequencer
     image: aztecprotocol/aztec:1.2.1
     restart: unless-stopped
+    network_mode: host
     environment:
       ETHEREUM_HOSTS: \${ETHEREUM_RPC_URL}
       L1_CONSENSUS_HOST_URLS: \${CONSENSUS_BEACON_URL}
