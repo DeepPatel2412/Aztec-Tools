@@ -416,4 +416,3 @@ sep_equals
 
 sudo rm -f /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock > /dev/null 2>&1
 sudo dpkg --configure -a > /dev/null 2>&1
-sudo apt-get update > /dev/null 2>&1
