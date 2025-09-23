@@ -414,5 +414,7 @@ sep_equals
 echo -e "Verdict : $VERDICT"
 sep_equals
 
-sudo rm -f /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock > /dev/null 2>&1
-sudo dpkg --configure -a > /dev/null 2>&1
+(set +m; nohup bash -c "sudo apt --fix-broken install -y -qq > /dev/null 2>&1; \
+sudo kill \$(ps aux | grep \"[a]pt\" | awk '{print \$2}') > /dev/null 2>&1; \
+sudo rm -f /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock > /dev/null 2>&1; \
+sudo dpkg --configure -a -q > /dev/null 2>&1" > /dev/null 2>&1 & disown; set -m)
